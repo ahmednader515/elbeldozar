@@ -160,3 +160,44 @@ model Lesson {
   course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   @@unique([courseId, slug])
 }
+
+/// منح وصول دائم لدرس عبر كود تفعيل جزئي (لا يُحذف بحذف الكود)
+model UserLessonAccess {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  courseId     String   @map("course_id")
+  lessonId     String   @map("lesson_id")
+  sourceCodeId String?  @map("source_code_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  @@unique([userId, lessonId])
+  @@index([userId, courseId])
+}
+
+/// منح وصول دائم لاختبار عبر كود تفعيل جزئي (لا يُحذف بحذف الكود)
+model UserQuizAccess {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  courseId     String   @map("course_id")
+  quizId       String   @map("quiz_id")
+  sourceCodeId String?  @map("source_code_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  @@unique([userId, quizId])
+  @@index([userId, courseId])
+}
+
+/// تتبع مشاهدة الطالب للمحاضرة (للأدمن)
+model LessonProgress {
+  id              String   @id @default(cuid())
+  userId          String   @map("user_id")
+  lessonId        String   @map("lesson_id")
+  courseId        String   @map("course_id")
+  watchedSeconds  Int      @default(0) @map("watched_seconds")
+  durationSeconds Int?     @map("duration_seconds")
+  completed       Boolean  @default(false)
+  lastWatchedAt   DateTime @default(now()) @map("last_watched_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  @@unique([userId, lessonId])
+  @@index([userId, courseId])
+  @@index([courseId])
+}

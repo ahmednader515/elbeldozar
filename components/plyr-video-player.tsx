@@ -18,6 +18,8 @@ export interface PlyrVideoPlayerProps {
   className?: string;
   onEnded?: () => void;
   onTimeUpdate?: (currentTime: number) => void;
+  /** إن وُجد: يُرسل تقدم المشاهدة للسيرفر (للأدمن) */
+  progressReportLessonId?: string;
 }
 
 function readSavedProgress(key: string): number {
@@ -53,14 +55,17 @@ export function PlyrVideoPlayer({
   className = "",
   onEnded,
   onTimeUpdate,
+  progressReportLessonId,
 }: PlyrVideoPlayerProps) {
   const t = useT();
   const youtubeContainerRef = useRef<HTMLDivElement>(null);
   const playerRootRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<Plyr | null>(null);
   const lastSaveRef = useRef(0);
+  const lastReportRef = useRef(0);
   const onEndedRef = useRef(onEnded);
   const onTimeUpdateRef = useRef(onTimeUpdate);
+  const progressReportLessonIdRef = useRef(progressReportLessonId);
 
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [fullscreenContainer, setFullscreenContainer] = useState<Element | null>(null);
@@ -72,7 +77,31 @@ export function PlyrVideoPlayer({
   useEffect(() => {
     onEndedRef.current = onEnded;
     onTimeUpdateRef.current = onTimeUpdate;
-  }, [onEnded, onTimeUpdate]);
+    progressReportLessonIdRef.current = progressReportLessonId;
+  }, [onEnded, onTimeUpdate, progressReportLessonId]);
+
+  const reportProgressToServer = useCallback(
+    (player: Plyr, completed = false) => {
+      const lessonId = progressReportLessonIdRef.current;
+      if (!lessonId) return;
+      const current = player.currentTime;
+      if (!Number.isFinite(current) || current < 0) return;
+      const duration = Number.isFinite(player.duration) ? player.duration : null;
+      void fetch(`/api/lessons/${encodeURIComponent(lessonId)}/progress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchedSeconds: Math.floor(current),
+          durationSeconds: duration != null ? Math.floor(duration) : null,
+          completed,
+        }),
+        keepalive: true,
+      }).catch(() => {
+        /* ignore network errors */
+      });
+    },
+    []
+  );
 
   const saveProgress = useCallback(
     (player: Plyr) => {
@@ -235,6 +264,7 @@ export function PlyrVideoPlayer({
       player.on("pause", () => {
         if (isCancelled) return;
         saveProgress(player);
+        reportProgressToServer(player, false);
       });
 
       player.on("timeupdate", () => {
@@ -246,11 +276,16 @@ export function PlyrVideoPlayer({
           lastSaveRef.current = now;
           saveProgress(player);
         }
+        if (progressReportLessonIdRef.current && now - lastReportRef.current >= 15000) {
+          lastReportRef.current = now;
+          reportProgressToServer(player, false);
+        }
       });
 
       player.on("ended", () => {
         if (isCancelled) return;
         clearSavedProgress(progressStorageKey);
+        reportProgressToServer(player, true);
         onEndedRef.current?.();
       });
 
@@ -281,7 +316,7 @@ export function PlyrVideoPlayer({
         youtubeContainerRef.current.innerHTML = "";
       }
     };
-  }, [youtubeVideoId, progressStorageKey, saveProgress, syncFullscreenContainer]);
+  }, [youtubeVideoId, progressStorageKey, saveProgress, reportProgressToServer, syncFullscreenContainer]);
 
   const seekControls = (
     <div

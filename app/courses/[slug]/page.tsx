@@ -142,7 +142,14 @@ export default async function CoursePage({ params }: Props) {
   const isStaff = session?.user?.role === "ADMIN" || session?.user?.role === "ASSISTANT_ADMIN";
   const canAccessContent =
     isStaff || hasPartialAccess || (session?.user?.role === "STUDENT" && hasFullStudentAccess);
-  const canAccessQuizzes = isStaff || (session?.user?.role === "STUDENT" && hasFullStudentAccess);
+  const canAccessQuizzes =
+    isStaff ||
+    (session?.user?.role === "STUDENT" && hasFullStudentAccess) ||
+    allowedQuizIds.length > 0;
+  const visibleQuizzes =
+    hasPartialAccess && !isEnrolled && !hasFullStudentAccess && !isStaff
+      ? (course.quizzes ?? []).filter((q) => allowedQuizIds.includes(String((q as { id?: string }).id ?? "")))
+      : (course.quizzes ?? []);
   const coursePrice = Number((course as Record<string, unknown>).price) || 0;
 
   const liveStreams = canAccessContent ? await getLiveStreamsByCourseId(course.id) : [];
@@ -387,18 +394,24 @@ export default async function CoursePage({ params }: Props) {
               </div>
             )}
 
-            {course.quizzes && course.quizzes.length > 0 && (
+            {visibleQuizzes.length > 0 && (
               <div className="mt-10">
                 <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
-                  {t("courses.quizzes", "Quizzes")} ({course.quizzes.length})
+                  {t("courses.quizzes", "Quizzes")} ({visibleQuizzes.length})
                 </h2>
                 <ul className="mt-4 space-y-2">
-                  {course.quizzes.map((quiz, i) => {
+                  {visibleQuizzes.map((quiz) => {
                     const q = quiz as Record<string, unknown> & { _count?: { questions?: number } };
                     const questionsCount = q._count?.questions ?? 0;
+                    const quizAllowed =
+                      canAccessQuizzes &&
+                      (isStaff ||
+                        hasFullStudentAccess ||
+                        isEnrolled ||
+                        allowedQuizIds.includes(String(q.id)));
                     return (
                     <li key={String(q.id)}>
-                      {canAccessQuizzes ? (
+                      {quizAllowed ? (
                         <Link
                           href={`/courses/${encodeURIComponent(normalizeSlugForUrl(String((course as Record<string, unknown>).slug ?? "")) || String((course as Record<string, unknown>).id ?? course.id))}/quizzes/${String(q.id)}`}
                           className="flex items-center justify-between rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4 transition hover:border-[var(--color-primary)]/30"

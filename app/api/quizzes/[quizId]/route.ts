@@ -5,10 +5,11 @@ import {
   getQuizById,
   getEnrollment,
   getAllowedQuizIdsForUserCourse,
-  countQuizAttemptsByUserAndCourse,
+  countCompletedQuizAttemptsByUserAndCourse,
   createQuizAttempt,
   updateQuizAttemptById,
   hasFullCourseAccessAsStudent,
+  canUserAccessQuiz,
 } from "@/lib/db";
 
 /**
@@ -43,13 +44,12 @@ export async function GET(
     const role = (session.user as { role?: string }).role;
     const isStaff = role === "ADMIN" || role === "ASSISTANT_ADMIN";
     if (!isStaff) {
-      const enrolled = await getEnrollment(session.user.id, courseId);
-      const fullCourse = await hasFullCourseAccessAsStudent(session.user.id, courseId);
-      if (!enrolled && !fullCourse) {
-        const allowedQuizIds = await getAllowedQuizIdsForUserCourse(session.user.id, courseId);
-        if (!allowedQuizIds.includes(quizId)) {
-          return NextResponse.json({ error: "غير مسجّل في هذه الدورة أو لا تملك صلاحية لهذا الاختبار" }, { status: 403 });
-        }
+      const canAccess = await canUserAccessQuiz(session.user.id, courseId, quizId);
+      if (!canAccess) {
+        return NextResponse.json(
+          { error: "غير مسجّل في هذه الدورة أو لا تملك صلاحية لهذا الاختبار" },
+          { status: 403 }
+        );
       }
     }
 
@@ -59,8 +59,11 @@ export async function GET(
     if (session?.user?.id && typeof maxAttempts === "number" && maxAttempts > 0) {
       const enrolled = await getEnrollment(session.user.id, courseId);
       const fullCourse = await hasFullCourseAccessAsStudent(session.user.id, courseId);
-      if (enrolled || fullCourse) {
-        attemptsUsed = await countQuizAttemptsByUserAndCourse(session.user.id, courseId);
+      const allowedQuizIds = !enrolled && !fullCourse
+        ? await getAllowedQuizIdsForUserCourse(session.user.id, courseId)
+        : [];
+      if (enrolled || fullCourse || allowedQuizIds.includes(quizId)) {
+        attemptsUsed = await countCompletedQuizAttemptsByUserAndCourse(session.user.id, courseId);
         if (attemptsUsed >= maxAttempts) {
           canAttempt = false;
         }
@@ -156,21 +159,26 @@ export async function POST(
     }
 
     const courseId = (result.quiz.courseId ?? result.quiz.course_id) as string;
-    const enrolled = await getEnrollment(session.user.id, courseId);
-    const fullCourse = await hasFullCourseAccessAsStudent(session.user.id, courseId);
-    if (!enrolled && !fullCourse) {
+    const role = (session.user as { role?: string }).role;
+    const isStaff = role === "ADMIN" || role === "ASSISTANT_ADMIN";
+    const canAccess = await canUserAccessQuiz(session.user.id, courseId, quizId, { isStaff });
+    if (!canAccess) {
       return NextResponse.json({ error: "غير مسجّل في هذه الدورة" }, { status: 403 });
     }
 
-    const maxAttempts = result.course.max_quiz_attempts ?? result.course.maxQuizAttempts;
-    if (typeof maxAttempts === "number" && maxAttempts > 0) {
-      const used = await countQuizAttemptsByUserAndCourse(session.user.id, courseId);
-      if (used >= maxAttempts) {
-        return NextResponse.json({ error: "تم استنفاد المحاولات" }, { status: 403 });
+    const attemptId = typeof body.attemptId === "string" && body.attemptId.trim() ? body.attemptId.trim() : null;
+
+    // إذا وُجد attemptId فالمحاولة حُسبت عند البدء — لا نرفض التسليم بحد المحاولات
+    if (!attemptId) {
+      const maxAttempts = result.course.max_quiz_attempts ?? result.course.maxQuizAttempts;
+      if (typeof maxAttempts === "number" && maxAttempts > 0) {
+        const used = await countCompletedQuizAttemptsByUserAndCourse(session.user.id, courseId);
+        if (used >= maxAttempts) {
+          return NextResponse.json({ error: "تم استنفاد المحاولات" }, { status: 403 });
+        }
       }
     }
 
-    const attemptId = typeof body.attemptId === "string" && body.attemptId.trim() ? body.attemptId.trim() : null;
     if (attemptId) {
       const ok = await updateQuizAttemptById({
         attemptId,

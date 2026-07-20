@@ -3774,8 +3774,11 @@ export async function createEnrollment(userId: string, courseId: string): Promis
   await sql`
     INSERT INTO "Enrollment" (id, user_id, course_id)
     VALUES (${id}, ${userId}, ${courseId})
+    ON CONFLICT (user_id, course_id) DO NOTHING
   `;
-  const rows = await sql`SELECT * FROM "Enrollment" WHERE id = ${id} LIMIT 1`;
+  const rows = await sql`
+    SELECT * FROM "Enrollment" WHERE user_id = ${userId} AND course_id = ${courseId} LIMIT 1
+  `;
   const e = rows[0] as Enrollment;
   if (!e) throw new Error("فشل إنشاء التسجيل");
   return e;
@@ -3791,6 +3794,91 @@ function generateCodeString(): string {
   let s = "";
   for (let i = 0; i < 10; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
+}
+
+/** جداول منح الوصول الدائم بعد تفعيل كود جزئي — لا تُحذف بحذف الكود */
+async function ensureUserAccessGrantsSchema(): Promise<void> {
+  return ensureOnce("ensureUserAccessGrantsSchema", async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS "UserLessonAccess" (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+        lesson_id TEXT NOT NULL REFERENCES "Lesson"(id) ON DELETE CASCADE,
+        source_code_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT user_lesson_access_unique UNIQUE (user_id, lesson_id)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS "UserLessonAccess_user_course_idx" ON "UserLessonAccess"(user_id, course_id)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS "UserQuizAccess" (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+        quiz_id TEXT NOT NULL REFERENCES "Quiz"(id) ON DELETE CASCADE,
+        source_code_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT user_quiz_access_unique UNIQUE (user_id, quiz_id)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS "UserQuizAccess_user_course_idx" ON "UserQuizAccess"(user_id, course_id)`;
+    // ترحيل المنح من أكواد مستخدمة سابقاً
+    try {
+      await sql`
+        INSERT INTO "UserLessonAccess" (id, user_id, course_id, lesson_id, source_code_id, created_at)
+        SELECT
+          ('ula_' || substr(md5(ac.id || acl.lesson_id || ac.used_by_user_id), 1, 24)),
+          ac.used_by_user_id,
+          ac.course_id,
+          acl.lesson_id,
+          ac.id,
+          COALESCE(ac.used_at, NOW())
+        FROM "ActivationCode" ac
+        JOIN "ActivationCodeLesson" acl ON acl.activation_code_id = ac.id
+        WHERE ac.used_at IS NOT NULL AND ac.used_by_user_id IS NOT NULL
+        ON CONFLICT (user_id, lesson_id) DO NOTHING
+      `;
+      await sql`
+        INSERT INTO "UserQuizAccess" (id, user_id, course_id, quiz_id, source_code_id, created_at)
+        SELECT
+          ('uqa_' || substr(md5(ac.id || acq.quiz_id || ac.used_by_user_id), 1, 24)),
+          ac.used_by_user_id,
+          ac.course_id,
+          acq.quiz_id,
+          ac.id,
+          COALESCE(ac.used_at, NOW())
+        FROM "ActivationCode" ac
+        JOIN "ActivationCodeQuiz" acq ON acq.activation_code_id = ac.id
+        WHERE ac.used_at IS NOT NULL AND ac.used_by_user_id IS NOT NULL
+        ON CONFLICT (user_id, quiz_id) DO NOTHING
+      `;
+    } catch {
+      /* جداول ActivationCodeLesson قد لا تكون موجودة بعد */
+    }
+  });
+}
+
+async function ensureLessonProgressSchema(): Promise<void> {
+  return ensureOnce("ensureLessonProgressSchema", async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS "LessonProgress" (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        lesson_id TEXT NOT NULL REFERENCES "Lesson"(id) ON DELETE CASCADE,
+        course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+        watched_seconds INTEGER NOT NULL DEFAULT 0,
+        duration_seconds INTEGER,
+        completed BOOLEAN NOT NULL DEFAULT FALSE,
+        last_watched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT lesson_progress_unique_user_lesson UNIQUE (user_id, lesson_id)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS "LessonProgress_user_course_idx" ON "LessonProgress"(user_id, course_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS "LessonProgress_course_idx" ON "LessonProgress"(course_id)`;
+  });
 }
 
 export async function createActivationCodes(
@@ -3916,15 +4004,15 @@ export async function getActivationCodeByCode(code: string): Promise<(Activation
 }
 
 export async function useActivationCode(codeId: string, userId: string): Promise<{ courseId: string; lessonIds: string[]; quizIds: string[] } | null> {
-  // تحديث آمن لمنع تفعيل نفس الكود مرتين
-  const updated = await sql`
-    UPDATE "ActivationCode"
-    SET used_at = NOW(), used_by_user_id = ${userId}
-    WHERE id = ${codeId} AND used_at IS NULL
-    RETURNING course_id
+  await ensureUserAccessGrantsSchema();
+
+  // اقرأ نطاق الكود قبل وضع علامة الاستخدام حتى لا يُحرق الكود عند فشل التسجيل
+  const unused = await sql`
+    SELECT course_id FROM "ActivationCode" WHERE id = ${codeId} AND used_at IS NULL LIMIT 1
   `;
-  const row = updated[0] as { course_id?: string } | undefined;
-  if (!row?.course_id) return null;
+  const unusedRow = unused[0] as { course_id?: string } | undefined;
+  if (!unusedRow?.course_id) return null;
+  const courseId = String(unusedRow.course_id);
 
   let lessonIds: string[] = [];
   let quizIds: string[] = [];
@@ -3938,21 +4026,98 @@ export async function useActivationCode(codeId: string, userId: string): Promise
     quizIds = [];
   }
 
-  // إذا لم يتم تحديد حصص ولا اختبارات => تسجيل كامل في الدورة (السلوك القديم)
-  if (lessonIds.length === 0 && quizIds.length === 0) {
-    await createEnrollment(userId, row.course_id);
+  const emptyScope = lessonIds.length === 0 && quizIds.length === 0;
+  let isFullIntent = emptyScope;
+  if (!emptyScope) {
+    try {
+      const lessonCountRows = await sql`SELECT COUNT(*)::int as c FROM "Lesson" WHERE course_id = ${courseId}`;
+      const quizCountRows = await sql`SELECT COUNT(*)::int as c FROM "Quiz" WHERE course_id = ${courseId}`;
+      const totalLessons = Number((lessonCountRows[0] as { c?: number })?.c ?? 0);
+      const totalQuizzes = Number((quizCountRows[0] as { c?: number })?.c ?? 0);
+      const coversAllLessons = totalLessons > 0 && lessonIds.length >= totalLessons;
+      const coversAllQuizzes = totalQuizzes === 0 || quizIds.length >= totalQuizzes;
+      isFullIntent = coversAllLessons && coversAllQuizzes;
+    } catch {
+      isFullIntent = false;
+    }
   }
-  return { courseId: row.course_id, lessonIds, quizIds };
+
+  if (isFullIntent) {
+    // تسجيل كامل أولاً ثم وضع علامة الاستخدام — لا نستهلك الكود إن فشل التسجيل
+    try {
+      await createEnrollment(userId, courseId);
+    } catch (e) {
+      console.error("useActivationCode createEnrollment:", e);
+      return null;
+    }
+    const updated = await sql`
+      UPDATE "ActivationCode"
+      SET used_at = NOW(), used_by_user_id = ${userId}
+      WHERE id = ${codeId} AND used_at IS NULL
+      RETURNING course_id
+    `;
+    if (!(updated[0] as { course_id?: string } | undefined)?.course_id) {
+      // سباق نادر: الكود استُخدم بين الفحص والتحديث — التسجيل موجود بالفعل
+      return { courseId, lessonIds: [], quizIds: [] };
+    }
+    return { courseId, lessonIds: [], quizIds: [] };
+  }
+
+  // وصول جزئي: ضع علامة الاستخدام ثم انسخ المنح إلى جداول دائمة
+  const updated = await sql`
+    UPDATE "ActivationCode"
+    SET used_at = NOW(), used_by_user_id = ${userId}
+    WHERE id = ${codeId} AND used_at IS NULL
+    RETURNING course_id
+  `;
+  if (!(updated[0] as { course_id?: string } | undefined)?.course_id) return null;
+
+  try {
+    for (const lessonId of lessonIds) {
+      const id = generateId();
+      await sql`
+        INSERT INTO "UserLessonAccess" (id, user_id, course_id, lesson_id, source_code_id)
+        VALUES (${id}, ${userId}, ${courseId}, ${lessonId}, ${codeId})
+        ON CONFLICT (user_id, lesson_id) DO NOTHING
+      `;
+    }
+    for (const quizId of quizIds) {
+      const id = generateId();
+      await sql`
+        INSERT INTO "UserQuizAccess" (id, user_id, course_id, quiz_id, source_code_id)
+        VALUES (${id}, ${userId}, ${courseId}, ${quizId}, ${codeId})
+        ON CONFLICT (user_id, quiz_id) DO NOTHING
+      `;
+    }
+  } catch (e) {
+    // أرجع الكود غير مستخدم حتى لا يُحرق بدون منح
+    await sql`
+      UPDATE "ActivationCode"
+      SET used_at = NULL, used_by_user_id = NULL
+      WHERE id = ${codeId} AND used_by_user_id = ${userId}
+    `;
+    console.error("useActivationCode grant copy:", e);
+    return null;
+  }
+
+  return { courseId, lessonIds, quizIds };
 }
 
 /** الحصص المسموح بها لطالب داخل كورس عبر أكواد حصص محددة */
 export async function getAllowedLessonIdsForUserCourse(userId: string, courseId: string): Promise<string[]> {
   try {
+    await ensureUserAccessGrantsSchema();
     const rows = await sql`
-      SELECT DISTINCT acl.lesson_id
-      FROM "ActivationCode" ac
-      JOIN "ActivationCodeLesson" acl ON acl.activation_code_id = ac.id
-      WHERE ac.used_by_user_id = ${userId} AND ac.course_id = ${courseId} AND ac.used_at IS NOT NULL
+      SELECT DISTINCT lesson_id FROM (
+        SELECT ula.lesson_id
+        FROM "UserLessonAccess" ula
+        WHERE ula.user_id = ${userId} AND ula.course_id = ${courseId}
+        UNION
+        SELECT acl.lesson_id
+        FROM "ActivationCode" ac
+        JOIN "ActivationCodeLesson" acl ON acl.activation_code_id = ac.id
+        WHERE ac.used_by_user_id = ${userId} AND ac.course_id = ${courseId} AND ac.used_at IS NOT NULL
+      ) t
     `;
     return (rows as { lesson_id?: string }[]).map((r) => String(r.lesson_id ?? "")).filter(Boolean);
   } catch {
@@ -3963,11 +4128,18 @@ export async function getAllowedLessonIdsForUserCourse(userId: string, courseId:
 /** الاختبارات المسموح بها لطالب داخل كورس عبر أكواد اختبارات محددة */
 export async function getAllowedQuizIdsForUserCourse(userId: string, courseId: string): Promise<string[]> {
   try {
+    await ensureUserAccessGrantsSchema();
     const rows = await sql`
-      SELECT DISTINCT acq.quiz_id
-      FROM "ActivationCode" ac
-      JOIN "ActivationCodeQuiz" acq ON acq.activation_code_id = ac.id
-      WHERE ac.used_by_user_id = ${userId} AND ac.course_id = ${courseId} AND ac.used_at IS NOT NULL
+      SELECT DISTINCT quiz_id FROM (
+        SELECT uqa.quiz_id
+        FROM "UserQuizAccess" uqa
+        WHERE uqa.user_id = ${userId} AND uqa.course_id = ${courseId}
+        UNION
+        SELECT acq.quiz_id
+        FROM "ActivationCode" ac
+        JOIN "ActivationCodeQuiz" acq ON acq.activation_code_id = ac.id
+        WHERE ac.used_by_user_id = ${userId} AND ac.course_id = ${courseId} AND ac.used_at IS NOT NULL
+      ) t
     `;
     return (rows as { quiz_id?: string }[]).map((r) => String(r.quiz_id ?? "")).filter(Boolean);
   } catch {
@@ -3984,16 +4156,35 @@ export async function hasPartialCourseAccess(userId: string, courseId: string): 
   return lessons.length > 0 || quizzes.length > 0;
 }
 
+/** تحقق موحّد: هل يمكن للمستخدم فتح/بدء/تسليم هذا الاختبار؟ */
+export async function canUserAccessQuiz(
+  userId: string,
+  courseId: string,
+  quizId: string,
+  opts?: { isStaff?: boolean }
+): Promise<boolean> {
+  if (opts?.isStaff) return true;
+  const full = await hasFullCourseAccessAsStudent(userId, courseId);
+  if (full) return true;
+  const allowed = await getAllowedQuizIdsForUserCourse(userId, courseId);
+  return allowed.includes(quizId);
+}
+
 /** دورات الطالب: المسجّل فيها + الدورات المتاحة عبر أكواد (حصص/اختبارات محددة) + كل الدورات المدفوعة المنشورة عند اشتراك منصة نشط */
 export async function getAccessibleCoursesForUser(userId: string): Promise<(Course & { category?: Category })[]> {
   await ensurePlatformSubscriptionSchema();
   await ensureLessonRatingsSchema();
+  await ensureUserAccessGrantsSchema();
   const rows = await sql`
     SELECT c.*, ${courseRatingSelectSql()}, cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug
     FROM "Course" c
     LEFT JOIN "Category" cat ON c.category_id = cat.id
     WHERE c.id IN (
       SELECT course_id FROM "Enrollment" WHERE user_id = ${userId}
+      UNION
+      SELECT course_id FROM "UserLessonAccess" WHERE user_id = ${userId}
+      UNION
+      SELECT course_id FROM "UserQuizAccess" WHERE user_id = ${userId}
       UNION
       SELECT ac.course_id
       FROM "ActivationCode" ac
@@ -4138,11 +4329,104 @@ export async function upsertLessonRating(data: {
 }
 
 export async function deleteActivationCode(id: string): Promise<void> {
+  // حذف الكود لا يمس UserLessonAccess / UserQuizAccess (لا FK CASCADE على source_code_id)
   await sql`DELETE FROM "ActivationCode" WHERE id = ${id}`;
 }
 
 export async function deleteActivationCodes(ids: string[]): Promise<void> {
   for (const id of ids) await deleteActivationCode(id);
+}
+
+// ----- LessonProgress (تتبع مشاهدة المحاضرات) -----
+export type LessonProgressRow = {
+  lessonId: string;
+  lessonTitle: string;
+  lessonTitleAr: string | null;
+  lessonOrder: number;
+  watchedSeconds: number;
+  durationSeconds: number | null;
+  completed: boolean;
+  lastWatchedAt: Date | null;
+  percent: number;
+};
+
+export async function upsertLessonProgress(params: {
+  userId: string;
+  lessonId: string;
+  courseId: string;
+  watchedSeconds: number;
+  durationSeconds?: number | null;
+  completed?: boolean;
+}): Promise<void> {
+  await ensureLessonProgressSchema();
+  const watched = Math.max(0, Math.floor(Number(params.watchedSeconds) || 0));
+  const duration =
+    params.durationSeconds != null && Number.isFinite(Number(params.durationSeconds))
+      ? Math.max(0, Math.floor(Number(params.durationSeconds)))
+      : null;
+  let completed = Boolean(params.completed);
+  if (!completed && duration != null && duration > 0 && watched >= duration * 0.9) {
+    completed = true;
+  }
+  const id = generateId();
+  await sql`
+    INSERT INTO "LessonProgress" (
+      id, user_id, lesson_id, course_id, watched_seconds, duration_seconds, completed, last_watched_at, updated_at
+    )
+    VALUES (
+      ${id}, ${params.userId}, ${params.lessonId}, ${params.courseId},
+      ${watched}, ${duration}, ${completed}, NOW(), NOW()
+    )
+    ON CONFLICT (user_id, lesson_id) DO UPDATE SET
+      watched_seconds = GREATEST("LessonProgress".watched_seconds, EXCLUDED.watched_seconds),
+      duration_seconds = COALESCE(EXCLUDED.duration_seconds, "LessonProgress".duration_seconds),
+      completed = "LessonProgress".completed OR EXCLUDED.completed,
+      last_watched_at = NOW(),
+      updated_at = NOW()
+  `;
+}
+
+export async function getLessonProgressForUserCourse(
+  userId: string,
+  courseId: string
+): Promise<LessonProgressRow[]> {
+  await ensureLessonProgressSchema();
+  const rows = await sql`
+    SELECT
+      l.id AS lesson_id,
+      l.title AS lesson_title,
+      l.title_ar AS lesson_title_ar,
+      l."order" AS lesson_order,
+      COALESCE(lp.watched_seconds, 0)::int AS watched_seconds,
+      lp.duration_seconds,
+      COALESCE(lp.completed, false) AS completed,
+      lp.last_watched_at
+    FROM "Lesson" l
+    LEFT JOIN "LessonProgress" lp
+      ON lp.lesson_id = l.id AND lp.user_id = ${userId}
+    WHERE l.course_id = ${courseId}
+    ORDER BY l."order" ASC
+  `;
+  return (rows as Record<string, unknown>[]).map((r) => {
+    const watched = Number(r.watched_seconds ?? 0);
+    const duration = r.duration_seconds == null ? null : Number(r.duration_seconds);
+    const completed = Boolean(r.completed);
+    let percent = 0;
+    if (completed) percent = 100;
+    else if (duration != null && duration > 0) percent = Math.min(100, Math.round((watched / duration) * 100));
+    else if (watched > 0) percent = 1;
+    return {
+      lessonId: String(r.lesson_id ?? ""),
+      lessonTitle: String(r.lesson_title ?? ""),
+      lessonTitleAr: r.lesson_title_ar != null ? String(r.lesson_title_ar) : null,
+      lessonOrder: Number(r.lesson_order ?? 0),
+      watchedSeconds: watched,
+      durationSeconds: duration,
+      completed,
+      lastWatchedAt: r.last_watched_at ? (r.last_watched_at as Date) : null,
+      percent,
+    };
+  });
 }
 
 // ----- HomeworkSubmission (استلام واجبات الطلاب — مرتبط بحصة أو بالكورس) -----
@@ -4385,6 +4669,16 @@ export async function countQuizAttemptsByUserAndCourse(userId: string, courseId:
     SELECT COUNT(*)::int as c FROM "QuizAttempt" qa
     JOIN "Quiz" q ON q.id = qa.quiz_id
     WHERE qa.user_id = ${userId} AND q.course_id = ${courseId}
+  `;
+  return Number((rows[0] as { c: number })?.c ?? 0);
+}
+
+/** عدد المحاولات المكتملة فقط (total_questions > 0) — لا تُحسب محاولات البدء غير المسلَّمة ضمن الحد */
+export async function countCompletedQuizAttemptsByUserAndCourse(userId: string, courseId: string): Promise<number> {
+  const rows = await sql`
+    SELECT COUNT(*)::int as c FROM "QuizAttempt" qa
+    JOIN "Quiz" q ON q.id = qa.quiz_id
+    WHERE qa.user_id = ${userId} AND q.course_id = ${courseId} AND qa.total_questions > 0
   `;
   return Number((rows[0] as { c: number })?.c ?? 0);
 }

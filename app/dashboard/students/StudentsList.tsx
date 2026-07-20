@@ -72,6 +72,19 @@ export function StudentsList({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [enrollError, setEnrollError] = useState("");
+  const [progressCourseId, setProgressCourseId] = useState<string | null>(null);
+  const [progressLoading, setProgressLoading] = useState(false);
+  const [progressError, setProgressError] = useState("");
+  const [lessonProgress, setLessonProgress] = useState<
+    Array<{
+      lessonId: string;
+      lessonTitle: string;
+      lessonTitleAr: string | null;
+      completed: boolean;
+      percent: number;
+      watchedSeconds: number;
+    }>
+  >([]);
 
   const dash = t("dashboard.studentsPage.dash", "—");
   const egp = t("common.egyptianPoundShort", "EGP");
@@ -141,6 +154,40 @@ export function StudentsList({
     setCoursesStudent(s);
     setAddCourseId("");
     setEnrollError("");
+    setProgressCourseId(null);
+    setLessonProgress([]);
+    setProgressError("");
+  }
+
+  async function loadLessonProgress(courseId: string) {
+    if (!coursesStudent) return;
+    if (progressCourseId === courseId) {
+      setProgressCourseId(null);
+      setLessonProgress([]);
+      setProgressError("");
+      return;
+    }
+    setProgressCourseId(courseId);
+    setProgressLoading(true);
+    setProgressError("");
+    setLessonProgress([]);
+    try {
+      const res = await fetch(
+        `/api/dashboard/students/${encodeURIComponent(coursesStudent.id)}/lesson-progress?courseId=${encodeURIComponent(courseId)}`
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setProgressError(
+          data.error ?? t("dashboard.studentsPage.errorLoadProgress", "Failed to load watch progress")
+        );
+        return;
+      }
+      setLessonProgress(Array.isArray(data.lessons) ? data.lessons : []);
+    } catch {
+      setProgressError(t("dashboard.studentsPage.errorLoadProgress", "Failed to load watch progress"));
+    } finally {
+      setProgressLoading(false);
+    }
   }
 
   const availableToAdd = useMemo(() => {
@@ -302,7 +349,7 @@ export function StudentsList({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div
             dir={dir}
-            className="w-full max-w-lg rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg"
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg"
           >
             <h3 className="text-lg font-semibold text-[var(--color-foreground)]">
               {t("dashboard.studentsPage.coursesModalTitlePrefix", "Manage courses —")} {coursesStudent.name}
@@ -323,17 +370,70 @@ export function StudentsList({
                   {coursesStudent.enrollments.map((e) => (
                     <li
                       key={e.courseId}
-                      className="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                      className="rounded border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
                     >
-                      <span className="text-sm">{e.course.titleAr ?? e.course.title}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCourse(e.courseId)}
-                        disabled={loading}
-                        className="text-sm text-red-600 hover:underline disabled:opacity-50"
-                      >
-                        {t("dashboard.studentsPage.remove", "Remove")}
-                      </button>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm">{e.course.titleAr ?? e.course.title}</span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void loadLessonProgress(e.courseId)}
+                            disabled={progressLoading && progressCourseId === e.courseId}
+                            className="text-sm text-[var(--color-primary)] hover:underline disabled:opacity-50"
+                          >
+                            {progressCourseId === e.courseId
+                              ? t("dashboard.studentsPage.hideWatchProgress", "Hide watch status")
+                              : t("dashboard.studentsPage.showWatchProgress", "Watch status")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCourse(e.courseId)}
+                            disabled={loading}
+                            className="text-sm text-red-600 hover:underline disabled:opacity-50"
+                          >
+                            {t("dashboard.studentsPage.remove", "Remove")}
+                          </button>
+                        </div>
+                      </div>
+                      {progressCourseId === e.courseId ? (
+                        <div className="mt-2 border-t border-[var(--color-border)] pt-2">
+                          {progressLoading ? (
+                            <p className="text-xs text-[var(--color-muted)]">
+                              {t("dashboard.studentsPage.loadingProgress", "Loading…")}
+                            </p>
+                          ) : progressError ? (
+                            <p className="text-xs text-red-600 dark:text-red-400">{progressError}</p>
+                          ) : lessonProgress.length === 0 ? (
+                            <p className="text-xs text-[var(--color-muted)]">
+                              {t("dashboard.studentsPage.noLessonsInCourse", "No lessons in this course")}
+                            </p>
+                          ) : (
+                            <ul className="space-y-1">
+                              {lessonProgress.map((lp) => {
+                                const status = lp.completed
+                                  ? t("dashboard.studentsPage.watched", "Watched")
+                                  : lp.watchedSeconds > 0
+                                    ? t("dashboard.studentsPage.inProgress", "In progress")
+                                    : t("dashboard.studentsPage.notStarted", "Not started");
+                                return (
+                                  <li
+                                    key={lp.lessonId}
+                                    className="flex items-center justify-between gap-2 text-xs text-[var(--color-foreground)]"
+                                  >
+                                    <span className="min-w-0 truncate">
+                                      {lp.lessonTitleAr ?? lp.lessonTitle}
+                                    </span>
+                                    <span className="shrink-0 text-[var(--color-muted)]">
+                                      {status}
+                                      {lp.watchedSeconds > 0 && !lp.completed ? ` (${lp.percent}%)` : ""}
+                                    </span>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </div>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -375,6 +475,8 @@ export function StudentsList({
                 onClick={() => {
                   setCoursesStudent(null);
                   setEnrollError("");
+                  setProgressCourseId(null);
+                  setLessonProgress([]);
                 }}
                 className="rounded-[var(--radius-btn)] border border-[var(--color-border)] px-4 py-2 text-sm font-medium"
               >

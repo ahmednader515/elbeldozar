@@ -2,7 +2,12 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getCourseWithContent, getEnrollment, hasFullCourseAccessAsStudent } from "@/lib/db";
+import {
+  getCourseWithContent,
+  getEnrollment,
+  getAllowedQuizIdsForUserCourse,
+  hasFullCourseAccessAsStudent,
+} from "@/lib/db";
 import { CourseOutlineSidebar } from "@/components/CourseOutlineSidebar";
 import { QuizPageClient } from "./QuizPageClient";
 
@@ -53,12 +58,22 @@ export default async function QuizPage({ params }: Props) {
   course.quizzes = data.quizzes ?? [];
 
   let canAccess = false;
-  if (session?.user?.role === "ADMIN" || session?.user?.role === "ASSISTANT_ADMIN") canAccess = true;
+  let allowedQuizIds: string[] = [];
+  let hasFullStudentAccess = false;
+  let isEnrolled = false;
+  const isStaff = session?.user?.role === "ADMIN" || session?.user?.role === "ASSISTANT_ADMIN";
+  if (isStaff) canAccess = true;
   if (session?.user?.id) {
     const en = await getEnrollment(session.user.id, course.id);
+    isEnrolled = !!en;
     if (en) canAccess = true;
     else if (session.user.role === "STUDENT") {
-      canAccess = await hasFullCourseAccessAsStudent(session.user.id, course.id);
+      hasFullStudentAccess = await hasFullCourseAccessAsStudent(session.user.id, course.id);
+      if (hasFullStudentAccess) canAccess = true;
+      else {
+        allowedQuizIds = await getAllowedQuizIdsForUserCourse(session.user.id, course.id);
+        if (allowedQuizIds.includes(quizId)) canAccess = true;
+      }
     }
   }
   if (!canAccess) notFound();
@@ -67,7 +82,11 @@ export default async function QuizPage({ params }: Props) {
   if (!quizExists) notFound();
 
   const lessons = (course.lessons ?? []) as Array<Record<string, unknown> & { id: string; slug?: string | null }>;
-  const quizzes = (course.quizzes ?? []) as Array<Record<string, unknown> & { id: string }>;
+  const quizzesAll = (course.quizzes ?? []) as Array<Record<string, unknown> & { id: string }>;
+  const quizzes =
+    !isStaff && !isEnrolled && !hasFullStudentAccess && allowedQuizIds.length > 0
+      ? quizzesAll.filter((q) => allowedQuizIds.includes(String(q.id)))
+      : quizzesAll;
   const items: CourseItem[] = [
     ...lessons.map((l) => ({ type: "lesson" as const, id: l.id, slug: (l as Record<string, unknown>).slug as string | null })),
     ...quizzes.map((q) => ({ type: "quiz" as const, id: q.id })),

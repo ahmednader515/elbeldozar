@@ -166,6 +166,44 @@ CREATE TABLE IF NOT EXISTS "ActivationCodeQuiz" (
 CREATE INDEX IF NOT EXISTS "ActivationCodeQuiz_code_idx" ON "ActivationCodeQuiz"(activation_code_id);
 CREATE INDEX IF NOT EXISTS "ActivationCodeQuiz_quiz_idx" ON "ActivationCodeQuiz"(quiz_id);
 
+-- منح وصول دائم بعد تفعيل كود جزئي (لا تُحذف بحذف الكود)
+CREATE TABLE IF NOT EXISTS "UserLessonAccess" (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  course_id       TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+  lesson_id       TEXT NOT NULL REFERENCES "Lesson"(id) ON DELETE CASCADE,
+  source_code_id  TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_lesson_access_unique UNIQUE (user_id, lesson_id)
+);
+CREATE INDEX IF NOT EXISTS "UserLessonAccess_user_course_idx" ON "UserLessonAccess"(user_id, course_id);
+
+CREATE TABLE IF NOT EXISTS "UserQuizAccess" (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  course_id       TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+  quiz_id         TEXT NOT NULL REFERENCES "Quiz"(id) ON DELETE CASCADE,
+  source_code_id  TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_quiz_access_unique UNIQUE (user_id, quiz_id)
+);
+CREATE INDEX IF NOT EXISTS "UserQuizAccess_user_course_idx" ON "UserQuizAccess"(user_id, course_id);
+
+CREATE TABLE IF NOT EXISTS "LessonProgress" (
+  id               TEXT PRIMARY KEY,
+  user_id          TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  lesson_id        TEXT NOT NULL REFERENCES "Lesson"(id) ON DELETE CASCADE,
+  course_id        TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+  watched_seconds  INTEGER NOT NULL DEFAULT 0,
+  duration_seconds INTEGER,
+  completed        BOOLEAN NOT NULL DEFAULT FALSE,
+  last_watched_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT lesson_progress_unique_user_lesson UNIQUE (user_id, lesson_id)
+);
+CREATE INDEX IF NOT EXISTS "LessonProgress_user_course_idx" ON "LessonProgress"(user_id, course_id);
+
 -- 9) محاولات الاختبار
 CREATE TABLE IF NOT EXISTS "QuizAttempt" (
   id              TEXT PRIMARY KEY,

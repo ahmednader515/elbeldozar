@@ -6,6 +6,7 @@ import {
   getCourseWithContent,
   getEnrollment,
   getAllowedLessonIdsForUserCourse,
+  getAllowedQuizIdsForUserCourse,
   hasFullCourseAccessAsStudent,
   ensureUserCopyrightCode,
   getHomepageSettings,
@@ -76,6 +77,7 @@ export default async function LessonPage({ params }: Props) {
   const isStudent = session?.user?.role === "STUDENT";
   let isEnrolled = false;
   let allowedLessonIds: string[] = [];
+  let allowedQuizIds: string[] = [];
   let hasFullStudentAccess = false;
   if (session?.user?.id) {
     const en = await getEnrollment(session.user.id, course.id);
@@ -84,11 +86,18 @@ export default async function LessonPage({ params }: Props) {
       hasFullStudentAccess = await hasFullCourseAccessAsStudent(session.user.id, course.id);
     }
     if (!isEnrolled && !isStaff && !hasFullStudentAccess) {
-      allowedLessonIds = await getAllowedLessonIdsForUserCourse(session.user.id, course.id);
+      [allowedLessonIds, allowedQuizIds] = await Promise.all([
+        getAllowedLessonIdsForUserCourse(session.user.id, course.id),
+        getAllowedQuizIdsForUserCourse(session.user.id, course.id),
+      ]);
     }
   }
   const canAccessCourse =
-    isStaff || isEnrolled || hasFullStudentAccess || allowedLessonIds.length > 0;
+    isStaff ||
+    isEnrolled ||
+    hasFullStudentAccess ||
+    allowedLessonIds.length > 0 ||
+    allowedQuizIds.length > 0;
   if (!canAccessCourse) notFound();
 
   const lesson = isLessonId(lessonDecoded)
@@ -97,7 +106,7 @@ export default async function LessonPage({ params }: Props) {
   if (!lesson) notFound();
 
   // لو الوصول جزئي فقط (بدون تسجيل كامل أو اشتراك منصة): لا نسمح بفتح إلا الحصص المحددة
-  if (!isStaff && !isEnrolled && !hasFullStudentAccess && allowedLessonIds.length > 0) {
+  if (!isStaff && !isEnrolled && !hasFullStudentAccess && (allowedLessonIds.length > 0 || allowedQuizIds.length > 0)) {
     const lid = String((lesson as Record<string, unknown>).id ?? "");
     if (!allowedLessonIds.includes(lid)) notFound();
   }
@@ -137,7 +146,9 @@ export default async function LessonPage({ params }: Props) {
       : lessonsAll;
   const quizzesAll = (course.quizzes ?? []) as Array<Record<string, unknown> & { id: string; title?: string; _count?: { questions?: number } }>;
   const quizzes =
-    !isStaff && !isEnrolled && !hasFullStudentAccess && allowedLessonIds.length > 0 ? [] : quizzesAll;
+    !isStaff && !isEnrolled && !hasFullStudentAccess && (allowedLessonIds.length > 0 || allowedQuizIds.length > 0)
+      ? quizzesAll.filter((q) => allowedQuizIds.includes(String(q.id)))
+      : quizzesAll;
   const items: CourseItem[] = [
     ...lessons.map((l) => ({ type: "lesson" as const, id: l.id, slug: (l as Record<string, unknown>).slug as string | null, title: String(l.title ?? ""), titleAr: l.titleAr })),
     ...quizzes.map((q) => ({ type: "quiz" as const, id: q.id, title: String(q.title ?? ""), _count: q._count })),
@@ -166,6 +177,7 @@ export default async function LessonPage({ params }: Props) {
                 youtubeVideoId={youtubeVideoId}
                 storageKey={String(lessonObj.id)}
                 className="w-full"
+                progressReportLessonId={isStudent ? String(lessonObj.id) : undefined}
               />
               {studentCopyrightCode?.trim() ? (
                 <VideoCopyrightOverlay

@@ -12,6 +12,8 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
   const [starting, setStarting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [finalScore, setFinalScore] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const timeLimitMinutes = quiz.timeLimitMinutes ?? null;
   const totalSeconds =
@@ -67,26 +69,31 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
   const submitAnswers = useCallback(
     async (reason?: "timeup") => {
       const s = reason === "timeup" ? calculateScoreFromAnswers(answersRef.current) : calculateScore();
+      setFinalScore(s);
       setSubmitting(true);
+      setSaveError(null);
+      // أظهر النتيجة فوراً حتى لو فشل الحفظ على السيرفر
+      setSubmitted(true);
       try {
         const res = await fetch(`/api/quizzes/${encodeURIComponent(quiz.id)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ score: s, totalQuestions: totalScored, attemptId }),
+          body: JSON.stringify({
+            score: s,
+            totalQuestions: Math.max(1, totalScored),
+            attemptId,
+          }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          alert(data.error ?? t("quiz.saveResultFailed", "Failed to save result"));
+          const msg = data.error ?? t("quiz.saveResultFailed", "Failed to save result");
+          setSaveError(msg);
           if (reason === "timeup") timeUpSubmitStartedRef.current = false;
-          setSubmitting(false);
-          return;
-        }
-        setSubmitted(true);
-        if (reason === "timeup") {
+        } else if (reason === "timeup") {
           setToastMessage(t("quiz.examTimeEnded", "Time is up"));
         }
       } catch {
-        alert(t("quiz.serverConnectionFailed", "Failed to connect to server"));
+        setSaveError(t("quiz.serverConnectionFailed", "Failed to connect to server"));
         if (reason === "timeup") timeUpSubmitStartedRef.current = false;
       } finally {
         setSubmitting(false);
@@ -155,14 +162,11 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
   // إخفاء الإشعار بعد 4 ثوانٍ
   useEffect(() => {
     if (!toastMessage) return;
-    const t = setTimeout(() => setToastMessage(null), 4000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setToastMessage(null), 4000);
+    return () => clearTimeout(timer);
   }, [toastMessage]);
 
-  let score = 0;
-  if (submitted) {
-    score = calculateScore();
-  }
+  const score = submitted ? finalScore : 0;
 
   const mm = Math.floor(remainingSeconds / 60);
   const ss = remainingSeconds % 60;
@@ -182,23 +186,33 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
       {!submitted && started && totalSeconds > 0 && (
         <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
           <p className="text-sm font-medium text-[var(--color-foreground)]">
-            {t("quiz.remainingTime", "Time left:")} <span className="font-mono text-[var(--color-primary)]">{timeDisplay}</span>
+            {t("quiz.remainingTime", "Time left:")}{" "}
+            <span className="font-mono text-[var(--color-primary)]">{timeDisplay}</span>
           </p>
         </div>
       )}
 
       {!started && !submitted ? (
         <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-          <h3 className="text-lg font-semibold text-[var(--color-foreground)]">{t("quiz.readyTitle", "Ready to start the quiz?")}</h3>
+          <h3 className="text-lg font-semibold text-[var(--color-foreground)]">
+            {t("quiz.readyTitle", "Ready to start the quiz?")}
+          </h3>
           <p className="mt-2 text-sm text-[var(--color-muted)]">
-            {t("quiz.readySubtitle", "When you click \"Start quiz\", one attempt will be counted.")}
+            {t("quiz.readySubtitle", 'When you click "Start quiz", one attempt will be counted.')}
             {maxQuizAttempts != null && attemptsUsed != null ? (
-              <span className="mr-1"> ({t("quiz.usedAttempts", "Used")}: {attemptsUsed} {t("quiz.fromAttempts", "of")} {maxQuizAttempts})</span>
+              <span className="mr-1">
+                {" "}
+                ({t("quiz.usedAttempts", "Used")}: {attemptsUsed} {t("quiz.fromAttempts", "of")}{" "}
+                {maxQuizAttempts})
+              </span>
             ) : null}
           </p>
           {!canAttempt ? (
             <p className="mt-4 rounded-[var(--radius-btn)] border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400">
-              {t("quiz.cannotAttempt", "You cannot start a new attempt for this quiz due to attempt limits.")}
+              {t(
+                "quiz.cannotAttempt",
+                "You cannot start a new attempt for this quiz due to attempt limits."
+              )}
             </p>
           ) : null}
           <div className="mt-5 flex flex-wrap gap-3">
@@ -216,56 +230,58 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
 
       {started
         ? quiz.questions.map((q, i) => (
-        <div
-          key={q.id}
-          className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6"
-        >
-          <p className="font-medium text-[var(--color-foreground)]">
-            {i + 1}. {q.questionText}
-          </p>
-          <span className="mt-1 block text-xs text-[var(--color-muted)]">
-            {q.type === "MULTIPLE_CHOICE"
-              ? t("quiz.multipleChoice", "Multiple choice")
-              : q.type === "TRUE_FALSE"
-                ? t("quiz.trueFalse", "True/False")
-                : t("quiz.essay", "Essay")}
-          </span>
-          {q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE" ? (
-            <ul className="mt-4 space-y-2">
-              {q.options.map((opt) => (
-                <li key={opt.id}>
-                  <label className="flex cursor-pointer items-center gap-2 rounded border border-[var(--color-border)] p-3 hover:bg-[var(--color-background)]">
-                    <input
-                      type="radio"
-                      name={q.id}
-                      value={opt.id}
-                      checked={answers[q.id] === opt.id}
-                      onChange={() => setAnswer(q.id, opt.id)}
-                      disabled={submitted}
-                    />
-                    <span>{opt.text}</span>
-                    {submitted && opt.isCorrect && (
-                      <span className="text-sm text-[var(--color-success)]">✓ {t("quiz.correctAnswer", "Correct answer")}</span>
-                    )}
-                    {submitted && answers[q.id] === opt.id && !opt.isCorrect && (
-                      <span className="text-sm text-red-600">✗</span>
-                    )}
-                  </label>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <textarea
-              value={answers[q.id] ?? ""}
-              onChange={(e) => setAnswer(q.id, e.target.value)}
-              placeholder={t("quiz.essayPlaceholder", "Write your answer here...")}
-              rows={4}
-              disabled={submitted}
-              className="mt-4 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-            />
-          )}
-        </div>
-      ))
+            <div
+              key={q.id}
+              className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6"
+            >
+              <p className="font-medium text-[var(--color-foreground)]">
+                {i + 1}. {q.questionText}
+              </p>
+              <span className="mt-1 block text-xs text-[var(--color-muted)]">
+                {q.type === "MULTIPLE_CHOICE"
+                  ? t("quiz.multipleChoice", "Multiple choice")
+                  : q.type === "TRUE_FALSE"
+                    ? t("quiz.trueFalse", "True/False")
+                    : t("quiz.essay", "Essay")}
+              </span>
+              {q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE" ? (
+                <ul className="mt-4 space-y-2">
+                  {q.options.map((opt) => (
+                    <li key={opt.id}>
+                      <label className="flex cursor-pointer items-center gap-2 rounded border border-[var(--color-border)] p-3 hover:bg-[var(--color-background)]">
+                        <input
+                          type="radio"
+                          name={q.id}
+                          value={opt.id}
+                          checked={answers[q.id] === opt.id}
+                          onChange={() => setAnswer(q.id, opt.id)}
+                          disabled={submitted}
+                        />
+                        <span>{opt.text}</span>
+                        {submitted && opt.isCorrect && (
+                          <span className="text-sm text-[var(--color-success)]">
+                            ✓ {t("quiz.correctAnswer", "Correct answer")}
+                          </span>
+                        )}
+                        {submitted && answers[q.id] === opt.id && !opt.isCorrect && (
+                          <span className="text-sm text-red-600">✗</span>
+                        )}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <textarea
+                  value={answers[q.id] ?? ""}
+                  onChange={(e) => setAnswer(q.id, e.target.value)}
+                  placeholder={t("quiz.essayPlaceholder", "Write your answer here...")}
+                  rows={4}
+                  disabled={submitted}
+                  className="mt-4 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                />
+              )}
+            </div>
+          ))
         : null}
 
       {!submitted && started ? (
@@ -275,18 +291,29 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
           disabled={(!allAnswered && remainingSeconds > 0) || submitting}
           className="rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-6 py-3 font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
         >
-          {submitting ? t("quiz.submitting", "Submitting...") : t("quiz.finishAndShowResult", "Finish and show result")}
+          {submitting
+            ? t("quiz.submitting", "Submitting...")
+            : t("quiz.finishAndShowResult", "Finish and show result")}
         </button>
-      ) : (
+      ) : null}
+
+      {submitted ? (
         <div className="rounded-[var(--radius-card)] border border-[var(--color-primary)] bg-[var(--color-primary-light)]/30 p-6">
           <p className="text-lg font-semibold text-[var(--color-foreground)]">
-            {t("quiz.resultPrefix", "Your score in MCQ/True-False questions:")} {score} {t("quiz.from", "out of")} {totalScored}
+            {t("quiz.resultPrefix", "Your score in MCQ/True-False questions:")} {score}{" "}
+            {t("quiz.from", "out of")} {totalScored}
           </p>
           <p className="mt-2 text-sm text-[var(--color-muted)]">
-            {t("quiz.essayNotAutoCorrected", "Essay questions are not auto-graded; the teacher can review them later.")}
+            {t(
+              "quiz.essayNotAutoCorrected",
+              "Essay questions are not auto-graded; the teacher can review them later."
+            )}
           </p>
+          {saveError ? (
+            <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">{saveError}</p>
+          ) : null}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
