@@ -100,6 +100,11 @@ export function DashboardNav({
         </NavLink>
       )}
       {(isAdmin || isAssistant) && (
+        <NavLink href="/dashboard/essay-grading">
+          {t("dashboardNav.essayGrading", "Grade essay answers")}
+        </NavLink>
+      )}
+      {(isAdmin || isAssistant) && (
         <NavLink href="/dashboard/messages">
           {t("dashboardNav.privateStudentMessages", "Private student messages")}
         </NavLink>

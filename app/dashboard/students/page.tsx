@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import {
   getUsersByRole,
   getEnrollmentsWithCourseByUserId,
+  getAccessibleCoursesForUser,
   getCoursesPublished,
   backfillMissingStudentCopyrightCodes,
 } from "@/lib/db";
@@ -39,9 +40,13 @@ export default async function StudentsPage() {
   }
 
   const enrollmentsByUser = await Promise.all(rows.map((s) => getEnrollmentsWithCourseByUserId(s.id)));
+  // كورسات متاحة للطالب بوصول جزئي (كود حصص/اختبارات محددة) أو اشتراك منصة — لا يوجد لها Enrollment
+  // نجلبها لعرض حالة مشاهدة المحاضرات لهؤلاء الطلاب أيضاً في لوحة الأدمن (وليس فقط المسجَّلين بالكامل)
+  const accessibleByUser = await Promise.all(rows.map((s) => getAccessibleCoursesForUser(s.id).catch(() => [])));
 
   const students = rows.map((s, i) => {
     const row = s as unknown as Record<string, unknown>;
+    const enrolledCourseIds = new Set(enrollmentsByUser[i].map((e) => e.course_id));
     return {
     id: s.id,
     name: s.name,
@@ -57,6 +62,9 @@ export default async function StudentsPage() {
       courseId: e.course_id,
       course: { id: e.course.id, title: e.course.title, titleAr: e.course.titleAr, slug: e.course.slug },
     })),
+    partialAccessCourses: accessibleByUser[i]
+      .filter((c) => !enrolledCourseIds.has(c.id))
+      .map((c) => ({ id: c.id, title: c.title, titleAr: (c as { titleAr?: string | null }).titleAr ?? null })),
     };
   });
 

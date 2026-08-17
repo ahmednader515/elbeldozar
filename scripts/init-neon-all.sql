@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS "Question" (
   type          TEXT NOT NULL CHECK (type IN ('MULTIPLE_CHOICE', 'ESSAY', 'TRUE_FALSE')),
   question_text TEXT NOT NULL,
   "order"       INT NOT NULL DEFAULT 0,
+  max_score     INTEGER,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -217,6 +218,26 @@ CREATE TABLE IF NOT EXISTS "QuizAttempt" (
 
 CREATE INDEX IF NOT EXISTS "QuizAttempt_user_quiz_idx" ON "QuizAttempt"(user_id, quiz_id);
 CREATE INDEX IF NOT EXISTS "QuizAttempt_user_id_idx" ON "QuizAttempt"(user_id);
+
+-- 9.5) إجابات الأسئلة المقالية — تُصحَّح يدوياً من المشرف
+CREATE TABLE IF NOT EXISTS "QuizEssayAnswer" (
+  id             TEXT PRIMARY KEY,
+  attempt_id     TEXT NOT NULL REFERENCES "QuizAttempt"(id) ON DELETE CASCADE,
+  question_id    TEXT NOT NULL REFERENCES "Question"(id) ON DELETE CASCADE,
+  user_id        TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  quiz_id        TEXT NOT NULL REFERENCES "Quiz"(id) ON DELETE CASCADE,
+  course_id      TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+  answer_text    TEXT NOT NULL DEFAULT '',
+  max_score      INTEGER NOT NULL DEFAULT 5,
+  awarded_score  INTEGER,
+  feedback       TEXT,
+  graded_by_id   TEXT,
+  graded_at      TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT quiz_essay_answer_unique UNIQUE (attempt_id, question_id)
+);
+CREATE INDEX IF NOT EXISTS "QuizEssayAnswer_course_idx" ON "QuizEssayAnswer"(course_id);
 
 -- 10) المدفوعات (رصيد مدفوع — أرباح المنصة)
 CREATE TABLE IF NOT EXISTS "Payment" (

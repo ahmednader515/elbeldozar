@@ -29,7 +29,7 @@ export async function GET() {
 
 type LessonInput = { title: string; titleAr?: string; videoUrl?: string; content?: string; pdfUrl?: string };
 type QuestionOptionInput = { text: string; isCorrect: boolean };
-type QuestionInput = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionInput[] };
+type QuestionInput = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionInput[]; maxScore?: number };
 type QuizInput = { title: string; timeLimitMinutes?: number | null; questions: QuestionInput[] };
 
 export async function POST(request: NextRequest) {
@@ -190,6 +190,7 @@ export async function POST(request: NextRequest) {
         type: qType,
         question_text: qt.questionText?.trim() || "",
         order: qti + 1,
+        max_score: qType === "ESSAY" ? qt.maxScore : undefined,
       });
       if ((qt.type === "MULTIPLE_CHOICE" || qt.type === "TRUE_FALSE") && Array.isArray(qt.options)) {
         for (const opt of qt.options) {

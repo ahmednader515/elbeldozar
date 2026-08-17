@@ -66,7 +66,12 @@ function ensureOnce(key: string, fn: () => Promise<void>): Promise<void> {
   if (existing) return existing;
   const p = (async () => {
     await fn();
-  })();
+  })().catch((e) => {
+    // لا نُبقي الفشل مخزّناً إلى الأبد — إن فشل الإعداد (انقطاع شبكة عابر مثلاً)
+    // نحذفه من الخريطة ليُعاد المحاولة في الاستدعاء التالي بدل فشل دائم لعمر السيرفر.
+    ensureOnceMap.delete(key);
+    throw e;
+  });
   ensureOnceMap.set(key, p);
   return p;
 }
@@ -154,6 +159,11 @@ export async function getUserByEmailOrPhone(emailOrPhone: string): Promise<User 
 export async function getUserById(id: string): Promise<User | null> {
   const rows = await sql`SELECT * FROM "User" WHERE id = ${id} LIMIT 1`;
   return (rows[0] as User) ?? null;
+}
+
+/** حذف حساب مستخدم نهائياً — يعتمد على ON DELETE CASCADE في الجداول المرتبطة (تسجيلات، محاولات اختبارات، واجبات، رسائل، إلخ) */
+export async function deleteUser(id: string): Promise<void> {
+  await sql`DELETE FROM "User" WHERE id = ${id}`;
 }
 
 /** جلسة واحدة نشطة لكل مستخدم — نستخدمها لمنع تسجيل الدخول من أكثر من جهاز */
@@ -2431,6 +2441,10 @@ async function ensurePlatformSubscriptionSchema(): Promise<void> {
     `;
     await sql`CREATE INDEX IF NOT EXISTS "UserPlatformSubscription_user_expires_idx" ON "UserPlatformSubscription"(user_id, expires_at)`;
     await sql`CREATE INDEX IF NOT EXISTS "SubscriptionPlan_active_sort_idx" ON "SubscriptionPlan"(is_active, sort_order)`;
+    await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS badge_label TEXT`;
+    await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT false`;
+    await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT 'shield'`;
+    await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS features JSONB NOT NULL DEFAULT '[]'`;
     platformSubscriptionSchemaEnsured = true;
   } catch {
     /* إنشاء الجداول قد يفشل بدون صلاحية CREATE */
@@ -2869,6 +2883,8 @@ export async function buyStoreProduct(userId: string, productId: string): Promis
   return { purchased: true, alreadyOwned: false };
 }
 
+export type SubscriptionPlanFeature = { text: string; included: boolean };
+
 export type SubscriptionPlanPublic = {
   id: string;
   name: string;
@@ -2876,9 +2892,26 @@ export type SubscriptionPlanPublic = {
   imageUrl: string | null;
   durationKind: SubscriptionDurationKind;
   price: number;
+  badgeLabel: string | null;
+  isFeatured: boolean;
+  iconKey: string;
+  features: SubscriptionPlanFeature[];
 };
 
-export type SubscriptionPlanAdmin = SubscriptionPlanPublic & { isActive: boolean };
+export type SubscriptionPlanAdmin = SubscriptionPlanPublic & { isActive: boolean; sortOrder: number };
+
+function parseSubscriptionPlanFeatures(raw: unknown): SubscriptionPlanFeature[] {
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((f): f is Record<string, unknown> => !!f && typeof f === "object")
+      .map((f) => ({ text: String(f.text ?? ""), included: Boolean(f.included) }))
+      .filter((f) => f.text.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
 
 function addSubscriptionDuration(from: Date, kind: SubscriptionDurationKind): Date {
   const d = new Date(from.getTime());
@@ -2892,10 +2925,10 @@ export async function listActiveSubscriptionPlansPublic(): Promise<SubscriptionP
   try {
     await ensurePlatformSubscriptionSchema();
     const rows = await sql`
-      SELECT id, name, description, image_url, duration_kind, price
+      SELECT id, name, description, image_url, duration_kind, price, badge_label, is_featured, icon_key, features
       FROM "SubscriptionPlan"
       WHERE is_active = true
-      ORDER BY created_at DESC
+      ORDER BY sort_order ASC, created_at ASC
     `;
     return (rows as Record<string, unknown>[]).map((r) => ({
       id: String(r.id),
@@ -2904,6 +2937,10 @@ export async function listActiveSubscriptionPlansPublic(): Promise<SubscriptionP
       imageUrl: r.image_url ? String(r.image_url) : null,
       durationKind: String(r.duration_kind) as SubscriptionDurationKind,
       price: Number(r.price ?? 0),
+      badgeLabel: r.badge_label ? String(r.badge_label) : null,
+      isFeatured: Boolean(r.is_featured),
+      iconKey: String(r.icon_key ?? "shield"),
+      features: parseSubscriptionPlanFeatures(r.features),
     }));
   } catch {
     return [];
@@ -2913,9 +2950,9 @@ export async function listActiveSubscriptionPlansPublic(): Promise<SubscriptionP
 export async function listSubscriptionPlansAll(): Promise<SubscriptionPlanAdmin[]> {
   await ensurePlatformSubscriptionSchema();
     const rows = await sql`
-      SELECT id, name, description, image_url, duration_kind, price, is_active
+      SELECT id, name, description, image_url, duration_kind, price, is_active, badge_label, is_featured, icon_key, features, sort_order
       FROM "SubscriptionPlan"
-      ORDER BY created_at DESC
+      ORDER BY sort_order ASC, created_at ASC
     `;
     return (rows as Record<string, unknown>[]).map((r) => ({
       id: String(r.id),
@@ -2925,6 +2962,11 @@ export async function listSubscriptionPlansAll(): Promise<SubscriptionPlanAdmin[
       durationKind: String(r.duration_kind) as SubscriptionDurationKind,
       price: Number(r.price ?? 0),
       isActive: Boolean(r.is_active),
+      badgeLabel: r.badge_label ? String(r.badge_label) : null,
+      isFeatured: Boolean(r.is_featured),
+      iconKey: String(r.icon_key ?? "shield"),
+      features: parseSubscriptionPlanFeatures(r.features),
+      sortOrder: Number(r.sort_order ?? 0),
     }));
 }
 
@@ -2935,13 +2977,18 @@ export async function createSubscriptionPlan(data: {
   duration_kind: SubscriptionDurationKind;
   price: number;
   is_active?: boolean;
+  badge_label?: string | null;
+  is_featured?: boolean;
+  icon_key?: string;
+  features?: SubscriptionPlanFeature[];
 }): Promise<{ id: string }> {
   await ensurePlatformSubscriptionSchema();
   const id = generateId();
   const dk = data.duration_kind;
   if (dk !== "week" && dk !== "month" && dk !== "year") throw new Error("مدة غير صالحة");
+  const featuresJson = JSON.stringify(data.features ?? []);
   await sql`
-    INSERT INTO "SubscriptionPlan" (id, name, description, image_url, duration_kind, price, is_active, sort_order)
+    INSERT INTO "SubscriptionPlan" (id, name, description, image_url, duration_kind, price, is_active, sort_order, badge_label, is_featured, icon_key, features)
     VALUES (
       ${id},
       ${data.name.trim()},
@@ -2950,7 +2997,11 @@ export async function createSubscriptionPlan(data: {
       ${dk},
       ${Math.max(0, data.price)},
       ${data.is_active !== false},
-      0
+      0,
+      ${data.badge_label?.trim() || null},
+      ${!!data.is_featured},
+      ${data.icon_key?.trim() || "shield"},
+      ${featuresJson}
     )
   `;
   return { id };
@@ -2965,6 +3016,10 @@ export async function updateSubscriptionPlan(
     duration_kind?: SubscriptionDurationKind;
     price?: number;
     is_active?: boolean;
+    badge_label?: string | null;
+    is_featured?: boolean;
+    icon_key?: string;
+    features?: SubscriptionPlanFeature[];
   },
 ): Promise<void> {
   await ensurePlatformSubscriptionSchema();
@@ -2980,6 +3035,26 @@ export async function updateSubscriptionPlan(
   }
   if (data.price !== undefined) await sql`UPDATE "SubscriptionPlan" SET price = ${Math.max(0, data.price)}, updated_at = NOW() WHERE id = ${id}`;
   if (data.is_active !== undefined) await sql`UPDATE "SubscriptionPlan" SET is_active = ${data.is_active}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.badge_label !== undefined)
+    await sql`UPDATE "SubscriptionPlan" SET badge_label = ${data.badge_label?.trim() || null}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.is_featured !== undefined)
+    await sql`UPDATE "SubscriptionPlan" SET is_featured = ${data.is_featured}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.icon_key !== undefined)
+    await sql`UPDATE "SubscriptionPlan" SET icon_key = ${data.icon_key.trim() || "shield"}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.features !== undefined)
+    await sql`UPDATE "SubscriptionPlan" SET features = ${JSON.stringify(data.features)}, updated_at = NOW() WHERE id = ${id}`;
+}
+
+/** تبديل ترتيب باقتين متجاورتين (لأزرار تحريك لأعلى/أسفل في لوحة التحكم) */
+export async function swapSubscriptionPlanSortOrder(idA: string, idB: string): Promise<void> {
+  await ensurePlatformSubscriptionSchema();
+  const rows = await sql`SELECT id, sort_order FROM "SubscriptionPlan" WHERE id IN (${idA}, ${idB})`;
+  const list = rows as { id: string; sort_order: number }[];
+  const a = list.find((r) => r.id === idA);
+  const b = list.find((r) => r.id === idB);
+  if (!a || !b) return;
+  await sql`UPDATE "SubscriptionPlan" SET sort_order = ${b.sort_order}, updated_at = NOW() WHERE id = ${idA}`;
+  await sql`UPDATE "SubscriptionPlan" SET sort_order = ${a.sort_order}, updated_at = NOW() WHERE id = ${idB}`;
 }
 
 export async function deleteSubscriptionPlan(id: string): Promise<void> {
@@ -2995,6 +3070,10 @@ export async function getSubscriptionPlanById(id: string): Promise<{
   duration_kind: SubscriptionDurationKind;
   price: number;
   is_active: boolean;
+  badge_label: string | null;
+  is_featured: boolean;
+  icon_key: string;
+  features: SubscriptionPlanFeature[];
 } | null> {
   await ensurePlatformSubscriptionSchema();
   const rows = await sql`SELECT * FROM "SubscriptionPlan" WHERE id = ${id} LIMIT 1`;
@@ -3008,6 +3087,10 @@ export async function getSubscriptionPlanById(id: string): Promise<{
     duration_kind: String(r.duration_kind) as SubscriptionDurationKind,
     price: Number(r.price ?? 0),
     is_active: Boolean(r.is_active),
+    badge_label: r.badge_label ? String(r.badge_label) : null,
+    is_featured: Boolean(r.is_featured),
+    icon_key: String(r.icon_key ?? "shield"),
+    features: parseSubscriptionPlanFeatures(r.features),
   };
 }
 
@@ -3716,16 +3799,25 @@ export async function createQuiz(data: { course_id: string; title: string; order
   return q;
 }
 
+async function ensureQuestionMaxScoreColumn(): Promise<void> {
+  return ensureOnce("ensureQuestionMaxScoreColumn", async () => {
+    await sql`ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS max_score INTEGER`;
+  });
+}
+
 export async function createQuestion(data: {
   quiz_id: string;
   type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE";
   question_text: string;
   order: number;
+  max_score?: number;
 }): Promise<Question> {
+  await ensureQuestionMaxScoreColumn();
   const id = generateId();
+  const maxScore = data.type === "ESSAY" ? (data.max_score && data.max_score >= 1 ? data.max_score : 5) : null;
   await sql`
-    INSERT INTO "Question" (id, quiz_id, type, question_text, "order")
-    VALUES (${id}, ${data.quiz_id}, ${data.type}, ${data.question_text}, ${data.order})
+    INSERT INTO "Question" (id, quiz_id, type, question_text, "order", max_score)
+    VALUES (${id}, ${data.quiz_id}, ${data.type}, ${data.question_text}, ${data.order}, ${maxScore})
   `;
   const rows = await sql`SELECT * FROM "Question" WHERE id = ${id} LIMIT 1`;
   const q = rows[0] as Question;
@@ -4120,7 +4212,8 @@ export async function getAllowedLessonIdsForUserCourse(userId: string, courseId:
       ) t
     `;
     return (rows as { lesson_id?: string }[]).map((r) => String(r.lesson_id ?? "")).filter(Boolean);
-  } catch {
+  } catch (e) {
+    console.error("getAllowedLessonIdsForUserCourse:", e);
     return [];
   }
 }
@@ -4142,7 +4235,8 @@ export async function getAllowedQuizIdsForUserCourse(userId: string, courseId: s
       ) t
     `;
     return (rows as { quiz_id?: string }[]).map((r) => String(r.quiz_id ?? "")).filter(Boolean);
-  } catch {
+  } catch (e) {
+    console.error("getAllowedQuizIdsForUserCourse:", e);
     return [];
   }
 }
@@ -4729,6 +4823,130 @@ export async function updateQuizAttemptById(params: {
   return rows.length > 0;
 }
 
+// ----- QuizEssayAnswer (إجابات الأسئلة المقالية — تُصحَّح يدوياً من المشرف) -----
+async function ensureQuizEssayAnswersSchema(): Promise<void> {
+  return ensureOnce("ensureQuizEssayAnswersSchema", async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS "QuizEssayAnswer" (
+        id TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL REFERENCES "QuizAttempt"(id) ON DELETE CASCADE,
+        question_id TEXT NOT NULL REFERENCES "Question"(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        quiz_id TEXT NOT NULL REFERENCES "Quiz"(id) ON DELETE CASCADE,
+        course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+        answer_text TEXT NOT NULL DEFAULT '',
+        max_score INTEGER NOT NULL DEFAULT 5,
+        awarded_score INTEGER,
+        feedback TEXT,
+        graded_by_id TEXT,
+        graded_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT quiz_essay_answer_unique UNIQUE (attempt_id, question_id)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS "QuizEssayAnswer_course_idx" ON "QuizEssayAnswer"(course_id)`;
+  });
+}
+
+/** حفظ إجابات الأسئلة المقالية عند تسليم الاختبار — لا تُعدَّل الدرجة إن كانت مصحَّحة مسبقاً */
+export async function saveQuizEssayAnswers(params: {
+  attemptId: string;
+  userId: string;
+  quizId: string;
+  courseId: string;
+  answers: Array<{ questionId: string; answerText: string; maxScore: number }>;
+}): Promise<void> {
+  if (params.answers.length === 0) return;
+  await ensureQuizEssayAnswersSchema();
+  for (const a of params.answers) {
+    const id = generateId();
+    await sql`
+      INSERT INTO "QuizEssayAnswer" (id, attempt_id, question_id, user_id, quiz_id, course_id, answer_text, max_score)
+      VALUES (${id}, ${params.attemptId}, ${a.questionId}, ${params.userId}, ${params.quizId}, ${params.courseId}, ${a.answerText}, ${a.maxScore})
+      ON CONFLICT (attempt_id, question_id) DO UPDATE SET answer_text = EXCLUDED.answer_text, updated_at = NOW()
+    `;
+  }
+}
+
+export type QuizEssayAnswerForAdmin = {
+  id: string;
+  attemptId: string;
+  questionId: string;
+  questionText: string;
+  maxScore: number;
+  answerText: string;
+  awardedScore: number | null;
+  feedback: string | null;
+  gradedAt: Date | null;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  quizId: string;
+  quizTitle: string;
+  courseId: string;
+  courseTitle: string;
+  createdAt: Date;
+};
+
+/** كل إجابات الأسئلة المقالية — غير المصحَّحة أولاً — للأدمن */
+export async function listQuizEssayAnswersForAdmin(): Promise<QuizEssayAnswerForAdmin[]> {
+  await ensureQuizEssayAnswersSchema();
+  const rows = await sql`
+    SELECT ea.id, ea.attempt_id, ea.question_id, q.question_text, ea.max_score,
+           ea.answer_text, ea.awarded_score, ea.feedback, ea.graded_at,
+           u.id as student_id, u.name as student_name, u.email as student_email,
+           ea.quiz_id, qz.title as quiz_title, ea.course_id, c.title as course_title,
+           ea.created_at
+    FROM "QuizEssayAnswer" ea
+    JOIN "User" u ON u.id = ea.user_id
+    JOIN "Question" q ON q.id = ea.question_id
+    JOIN "Quiz" qz ON qz.id = ea.quiz_id
+    JOIN "Course" c ON c.id = ea.course_id
+    ORDER BY (ea.awarded_score IS NULL) DESC, ea.created_at DESC
+  `;
+  return (rows as Record<string, unknown>[]).map((r) => ({
+    id: r.id as string,
+    attemptId: r.attempt_id as string,
+    questionId: r.question_id as string,
+    questionText: r.question_text as string,
+    maxScore: Number(r.max_score),
+    answerText: r.answer_text as string,
+    awardedScore: r.awarded_score == null ? null : Number(r.awarded_score),
+    feedback: (r.feedback as string | null) ?? null,
+    gradedAt: (r.graded_at as Date | null) ?? null,
+    studentId: r.student_id as string,
+    studentName: r.student_name as string,
+    studentEmail: r.student_email as string,
+    quizId: r.quiz_id as string,
+    quizTitle: r.quiz_title as string,
+    courseId: r.course_id as string,
+    courseTitle: r.course_title as string,
+    createdAt: r.created_at as Date,
+  }));
+}
+
+/** تصحيح إجابة سؤال مقالي — الدرجة تُقيَّد بين 0 والدرجة القصوى للسؤال */
+export async function gradeQuizEssayAnswer(params: {
+  id: string;
+  awardedScore: number;
+  feedback?: string | null;
+  gradedByUserId: string;
+}): Promise<boolean> {
+  await ensureQuizEssayAnswersSchema();
+  const rows = await sql`
+    UPDATE "QuizEssayAnswer"
+    SET awarded_score = LEAST(GREATEST(${params.awardedScore}, 0), max_score),
+        feedback = ${params.feedback?.trim() || null},
+        graded_by_id = ${params.gradedByUserId},
+        graded_at = NOW(),
+        updated_at = NOW()
+    WHERE id = ${params.id}
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
+
 export async function getQuizAttemptsByUserId(userId: string): Promise<
   Array<{ quizTitle: string; courseTitle: string; score: number; totalQuestions: number; createdAt: Date }>
 > {
@@ -4749,28 +4967,43 @@ export async function getQuizAttemptsByUserId(userId: string): Promise<
   }));
 }
 
-export async function getAllQuizAttemptsForAdmin(): Promise<
-  Array<{
-    userId: string;
-    userName: string;
-    userEmail: string;
-    quizId: string;
-    quizTitle: string;
-    courseId: string;
-    courseTitle: string;
-    score: number;
-    totalQuestions: number;
-    createdAt: Date;
-  }>
-> {
+type QuizAttemptForAdminRow = {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  quizId: string;
+  quizTitle: string;
+  courseId: string;
+  courseTitle: string;
+  score: number;
+  totalQuestions: number;
+  essayAwardedScore: number;
+  essayMaxScore: number;
+  essayPendingCount: number;
+  createdAt: Date;
+};
+
+export async function getAllQuizAttemptsForAdmin(): Promise<QuizAttemptForAdminRow[]> {
+  await ensureQuizEssayAnswersSchema();
   const rows = await sql`
     SELECT u.id as user_id, u.name as user_name, u.email as user_email,
            qa.quiz_id, q.title as quiz_title, c.id as course_id, c.title as course_title,
-           qa.score, qa.total_questions, qa.created_at
+           qa.score, qa.total_questions, qa.created_at,
+           COALESCE(ea.essay_awarded, 0) as essay_awarded,
+           COALESCE(ea.essay_max, 0) as essay_max,
+           COALESCE(ea.essay_pending, 0) as essay_pending
     FROM "QuizAttempt" qa
     JOIN "User" u ON u.id = qa.user_id
     JOIN "Quiz" q ON q.id = qa.quiz_id
     JOIN "Course" c ON c.id = q.course_id
+    LEFT JOIN (
+      SELECT attempt_id,
+             SUM(COALESCE(awarded_score, 0)) as essay_awarded,
+             SUM(max_score) as essay_max,
+             COUNT(*) FILTER (WHERE awarded_score IS NULL) as essay_pending
+      FROM "QuizEssayAnswer"
+      GROUP BY attempt_id
+    ) ea ON ea.attempt_id = qa.id
     ORDER BY qa.created_at DESC
   `;
   return (rows as Record<string, unknown>[]).map((r) => ({
@@ -4783,32 +5016,34 @@ export async function getAllQuizAttemptsForAdmin(): Promise<
     courseTitle: r.course_title as string,
     score: Number(r.score),
     totalQuestions: Number(r.total_questions),
+    essayAwardedScore: Number(r.essay_awarded ?? 0),
+    essayMaxScore: Number(r.essay_max ?? 0),
+    essayPendingCount: Number(r.essay_pending ?? 0),
     createdAt: r.created_at as Date,
   }));
 }
 
-export async function getQuizAttemptsForTeacher(teacherId: string): Promise<
-  Array<{
-    userId: string;
-    userName: string;
-    userEmail: string;
-    quizId: string;
-    quizTitle: string;
-    courseId: string;
-    courseTitle: string;
-    score: number;
-    totalQuestions: number;
-    createdAt: Date;
-  }>
-> {
+export async function getQuizAttemptsForTeacher(teacherId: string): Promise<QuizAttemptForAdminRow[]> {
+  await ensureQuizEssayAnswersSchema();
   const rows = await sql`
     SELECT u.id as user_id, u.name as user_name, u.email as user_email,
            qa.quiz_id, q.title as quiz_title, c.id as course_id, c.title as course_title,
-           qa.score, qa.total_questions, qa.created_at
+           qa.score, qa.total_questions, qa.created_at,
+           COALESCE(ea.essay_awarded, 0) as essay_awarded,
+           COALESCE(ea.essay_max, 0) as essay_max,
+           COALESCE(ea.essay_pending, 0) as essay_pending
     FROM "QuizAttempt" qa
     JOIN "User" u ON u.id = qa.user_id
     JOIN "Quiz" q ON q.id = qa.quiz_id
     JOIN "Course" c ON c.id = q.course_id AND c.created_by_id = ${teacherId}
+    LEFT JOIN (
+      SELECT attempt_id,
+             SUM(COALESCE(awarded_score, 0)) as essay_awarded,
+             SUM(max_score) as essay_max,
+             COUNT(*) FILTER (WHERE awarded_score IS NULL) as essay_pending
+      FROM "QuizEssayAnswer"
+      GROUP BY attempt_id
+    ) ea ON ea.attempt_id = qa.id
     ORDER BY qa.created_at DESC
   `;
   return (rows as Record<string, unknown>[]).map((r) => ({
@@ -4821,6 +5056,9 @@ export async function getQuizAttemptsForTeacher(teacherId: string): Promise<
     courseTitle: r.course_title as string,
     score: Number(r.score),
     totalQuestions: Number(r.total_questions),
+    essayAwardedScore: Number(r.essay_awarded ?? 0),
+    essayMaxScore: Number(r.essay_max ?? 0),
+    essayPendingCount: Number(r.essay_pending ?? 0),
     createdAt: r.created_at as Date,
   }));
 }

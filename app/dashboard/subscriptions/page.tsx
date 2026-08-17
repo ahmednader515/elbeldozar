@@ -22,6 +22,11 @@ export default async function SubscriptionsDashboardPage() {
       durationKind: r.durationKind,
       price: r.price,
       isActive: r.isActive,
+      badgeLabel: r.badgeLabel,
+      isFeatured: r.isFeatured,
+      iconKey: r.iconKey,
+      features: r.features,
+      sortOrder: r.sortOrder,
     }));
   } catch {
     plans = [];

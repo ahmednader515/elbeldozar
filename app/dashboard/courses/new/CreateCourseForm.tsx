@@ -8,7 +8,7 @@ import { CourseFormSaveOverlay } from "../CourseFormSaveOverlay";
 type CategoryOption = { id: string; name: string; nameAr?: string | null };
 type LessonRow = { title: string; videoUrl: string; content: string; pdfUrl: string; acceptsHomework: boolean };
 type QuestionOptionRow = { text: string; isCorrect: boolean };
-type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE"; questionText: string; options: QuestionOptionRow[] };
+type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE" | "ESSAY"; questionText: string; options: QuestionOptionRow[]; maxScore: string };
 type QuizRow = { title: string; timeLimitMinutes: string; questions: QuestionRow[] };
 type ContentOrderEntry = { type: "lesson"; index: number } | { type: "quiz"; index: number };
 
@@ -64,7 +64,7 @@ export function CreateCourseForm() {
     }
   }
 
-  const [quizzes, setQuizzes] = useState<QuizRow[]>([{ title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }] }] }]);
+  const [quizzes, setQuizzes] = useState<QuizRow[]>([{ title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }], maxScore: "" }] }]);
   const [contentOrder, setContentOrder] = useState<ContentOrderEntry[]>([{ type: "lesson", index: 0 }, { type: "quiz", index: 0 }]);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
@@ -91,7 +91,7 @@ export function CreateCourseForm() {
   }
 
   function addQuiz() {
-    setQuizzes((q) => [...q, { title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }] }] }]);
+    setQuizzes((q) => [...q, { title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }], maxScore: "" }] }]);
     setContentOrder((c) => [...c, { type: "quiz", index: c.filter((x) => x.type === "quiz").length }]);
   }
   function removeQuiz(qi: number) {
@@ -111,7 +111,7 @@ export function CreateCourseForm() {
   function addQuestion(qi: number) {
     setQuizzes((q) =>
       q.map((x, i) =>
-        i === qi ? { ...x, questions: [...x.questions, { type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }] }] } : x
+        i === qi ? { ...x, questions: [...x.questions, { type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }], maxScore: "" }] } : x
       )
     );
   }
@@ -127,7 +127,7 @@ export function CreateCourseForm() {
       )
     );
   }
-  function setQuestionType(qi: number, qti: number, type: "MULTIPLE_CHOICE" | "TRUE_FALSE") {
+  function setQuestionType(qi: number, qti: number, type: "MULTIPLE_CHOICE" | "TRUE_FALSE" | "ESSAY") {
     setQuizzes((q) =>
       q.map((x, i) =>
         i === qi
@@ -141,14 +141,25 @@ export function CreateCourseForm() {
                       options:
                         type === "MULTIPLE_CHOICE"
                           ? qt.options.length ? qt.options : [{ text: "", isCorrect: false }]
-                          : [
-                                { text: t(`${Cf}.trueOption`), isCorrect: true },
-                                { text: t(`${Cf}.falseOption`), isCorrect: false },
-                              ],
+                          : type === "TRUE_FALSE"
+                            ? [
+                                  { text: t(`${Cf}.trueOption`), isCorrect: true },
+                                  { text: t(`${Cf}.falseOption`), isCorrect: false },
+                                ]
+                            : [],
                     }
                   : qt
               ),
             }
+          : x
+      )
+    );
+  }
+  function updateQuestionMaxScore(qi: number, qti: number, value: string) {
+    setQuizzes((q) =>
+      q.map((x, i) =>
+        i === qi
+          ? { ...x, questions: x.questions.map((qt, j) => (j === qti ? { ...qt, maxScore: value } : qt)) }
           : x
       )
     );
@@ -223,6 +234,13 @@ export function CreateCourseForm() {
                 : qt.type === "TRUE_FALSE"
                   ? qt.options.map((o) => ({ text: o.text, isCorrect: o.isCorrect }))
                   : undefined,
+            maxScore:
+              qt.type === "ESSAY"
+                ? (() => {
+                    const n = parseInt(qt.maxScore, 10);
+                    return Number.isFinite(n) && n >= 1 ? n : undefined;
+                  })()
+                : undefined,
           })),
       }));
     const validLessonIndices = lessons.map((l, i) => (l.title.trim() ? i : -1)).filter((i) => i >= 0);
@@ -632,11 +650,12 @@ export function CreateCourseForm() {
                   <span className="text-sm font-medium">{t(`${Cf}.questionNPrefix`)}{qti + 1}</span>
                   <select
                     value={q.type}
-                    onChange={(e) => setQuestionType(qi, qti, e.target.value as "MULTIPLE_CHOICE" | "TRUE_FALSE")}
+                    onChange={(e) => setQuestionType(qi, qti, e.target.value as "MULTIPLE_CHOICE" | "TRUE_FALSE" | "ESSAY")}
                     className="rounded border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-sm"
                   >
                     <option value="MULTIPLE_CHOICE">{t(`${Cf}.mcqShort`)}</option>
                     <option value="TRUE_FALSE">{t(`${Cf}.tfShort`)}</option>
+                    <option value="ESSAY">{t(`${Cf}.essayShort`)}</option>
                   </select>
                   {quiz.questions.length > 1 && (
                     <button type="button" onClick={() => removeQuestion(qi, qti)} className="text-sm text-red-600 hover:underline">
@@ -703,6 +722,22 @@ export function CreateCourseForm() {
                         {t(`${Cf}.addOptionBtn`)}
                       </button>
                     )}
+                  </div>
+                )}
+                {q.type === "ESSAY" && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-[var(--color-muted)]">{t(`${Cf}.essayHintLine`)}</p>
+                    <div>
+                      <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.essayMaxScoreLabel`)}</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={q.maxScore}
+                        onChange={(e) => updateQuestionMaxScore(qi, qti, e.target.value)}
+                        placeholder="5"
+                        className="mt-1 w-24 rounded border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-sm"
+                      />
+                    </div>
                   </div>
                 )}
               </div>

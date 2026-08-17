@@ -365,6 +365,7 @@ export interface Question {
   question_text: string;
   order: number;
   quiz_id: string;
+  max_score?: number | null;
   created_at: Date;
   updated_at: Date;
 }

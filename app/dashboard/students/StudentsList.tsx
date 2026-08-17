@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AddBalanceButton } from "./AddBalanceButton";
 import { useT } from "@/components/LocaleProvider";
 import { useDashboardTable } from "@/lib/i18n/dashboard-table";
+import { fillMessage } from "@/lib/i18n/interpolate";
 
 type Course = { id: string; title: string; titleAr: string | null; slug: string };
 
@@ -13,6 +14,8 @@ type Enrollment = {
   courseId: string;
   course: Course;
 };
+
+type PartialAccessCourse = { id: string; title: string; titleAr: string | null };
 
 type Student = {
   id: string;
@@ -25,6 +28,7 @@ type Student = {
   copyright_code?: string | null;
   _count: { enrollments: number };
   enrollments: Enrollment[];
+  partialAccessCourses?: PartialAccessCourse[];
 };
 
 const ROLE_HEADER_KEYS: Record<string, string> = {
@@ -72,6 +76,7 @@ export function StudentsList({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [enrollError, setEnrollError] = useState("");
+  const [deletingStudentId, setDeletingStudentId] = useState<string | null>(null);
   const [progressCourseId, setProgressCourseId] = useState<string | null>(null);
   const [progressLoading, setProgressLoading] = useState(false);
   const [progressError, setProgressError] = useState("");
@@ -148,6 +153,33 @@ export function StudentsList({
     }
     setEditStudent(null);
     router.refresh();
+  }
+
+  async function handleDeleteStudent(s: Student) {
+    if (
+      !confirm(
+        fillMessage(
+          t(
+            "dashboard.studentsPage.confirmDeleteStudent",
+            "Delete {name}'s account permanently? This removes all their enrollments, quiz results, and messages. This cannot be undone."
+          ),
+          { name: s.name }
+        )
+      )
+    )
+      return;
+    setDeletingStudentId(s.id);
+    try {
+      const res = await fetch(`/api/dashboard/students/${s.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error ?? t("dashboard.studentsPage.errorDeleteFailed", "Failed to delete account"));
+        return;
+      }
+      router.refresh();
+    } finally {
+      setDeletingStudentId(null);
+    }
   }
 
   function openCourses(s: Student) {
@@ -324,13 +356,27 @@ export function StudentsList({
                   </td>
                 )}
                 <td className="p-3">
-                  <button
-                    type="button"
-                    onClick={() => openEdit(s)}
-                    className="text-sm font-medium text-[var(--color-primary)] hover:underline"
-                  >
-                    {t("dashboard.studentsPage.edit", "Edit")}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(s)}
+                      className="text-sm font-medium text-[var(--color-primary)] hover:underline"
+                    >
+                      {t("dashboard.studentsPage.edit", "Edit")}
+                    </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteStudent(s)}
+                        disabled={deletingStudentId === s.id}
+                        className="text-sm font-medium text-red-600 hover:underline disabled:opacity-50"
+                      >
+                        {deletingStudentId === s.id
+                          ? t("dashboard.studentsPage.deleting", "Deleting...")
+                          : t("dashboard.studentsPage.deleteAccount", "Delete account")}
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -437,6 +483,72 @@ export function StudentsList({
                     </li>
                   ))}
                 </ul>
+              )}
+              {coursesStudent.partialAccessCourses && coursesStudent.partialAccessCourses.length > 0 && (
+                <div className="mt-4 space-y-2 border-t border-[var(--color-border)] pt-3">
+                  <p className="text-sm font-medium text-[var(--color-foreground)]">
+                    {t("dashboard.studentsPage.partialAccessCourses", "Other accessible courses (partial code / subscription access):")}
+                  </p>
+                  <ul className="space-y-2">
+                    {coursesStudent.partialAccessCourses.map((c) => (
+                      <li
+                        key={c.id}
+                        className="rounded border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm">{c.titleAr ?? c.title}</span>
+                          <button
+                            type="button"
+                            onClick={() => void loadLessonProgress(c.id)}
+                            disabled={progressLoading && progressCourseId === c.id}
+                            className="text-sm text-[var(--color-primary)] hover:underline disabled:opacity-50"
+                          >
+                            {progressCourseId === c.id
+                              ? t("dashboard.studentsPage.hideWatchProgress", "Hide watch status")
+                              : t("dashboard.studentsPage.showWatchProgress", "Watch status")}
+                          </button>
+                        </div>
+                        {progressCourseId === c.id ? (
+                          <div className="mt-2 border-t border-[var(--color-border)] pt-2">
+                            {progressLoading ? (
+                              <p className="text-xs text-[var(--color-muted)]">
+                                {t("dashboard.studentsPage.loadingProgress", "Loading…")}
+                              </p>
+                            ) : progressError ? (
+                              <p className="text-xs text-red-600 dark:text-red-400">{progressError}</p>
+                            ) : lessonProgress.length === 0 ? (
+                              <p className="text-xs text-[var(--color-muted)]">
+                                {t("dashboard.studentsPage.noLessonsInCourse", "No lessons in this course")}
+                              </p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {lessonProgress.map((lp) => {
+                                  const status = lp.completed
+                                    ? t("dashboard.studentsPage.watched", "Watched")
+                                    : lp.watchedSeconds > 0
+                                      ? t("dashboard.studentsPage.inProgress", "In progress")
+                                      : t("dashboard.studentsPage.notStarted", "Not started");
+                                  return (
+                                    <li
+                                      key={lp.lessonId}
+                                      className="flex items-center justify-between gap-2 text-xs text-[var(--color-foreground)]"
+                                    >
+                                      <span className="min-w-0 truncate">{lp.lessonTitleAr ?? lp.lessonTitle}</span>
+                                      <span className="shrink-0 text-[var(--color-muted)]">
+                                        {status}
+                                        {lp.watchedSeconds > 0 && !lp.completed ? ` (${lp.percent}%)` : ""}
+                                      </span>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {availableToAdd.length > 0 && (
                 <form onSubmit={handleAddCourse} className="flex flex-wrap items-end gap-2 pt-2">

@@ -6,6 +6,8 @@ import { useT } from "@/components/LocaleProvider";
 import { useDashboardTable } from "@/lib/i18n/dashboard-table";
 import { fillMessage } from "@/lib/i18n/interpolate";
 
+export type PlanFeatureRow = { text: string; included: boolean };
+
 export type AdminPlanRow = {
   id: string;
   name: string;
@@ -14,7 +16,77 @@ export type AdminPlanRow = {
   durationKind: "week" | "month" | "year";
   price: number;
   isActive: boolean;
+  badgeLabel: string | null;
+  isFeatured: boolean;
+  iconKey: string;
+  features: PlanFeatureRow[];
+  sortOrder: number;
 };
+
+const ICON_OPTIONS = ["shield", "crown", "star"] as const;
+
+function FeaturesEditor({
+  features,
+  onChange,
+  t,
+  Su,
+}: {
+  features: PlanFeatureRow[];
+  onChange: (next: PlanFeatureRow[]) => void;
+  t: (key: string, fallback?: string) => string;
+  Su: string;
+}) {
+  return (
+    <div>
+      <span className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.labelFeatures`, "Features checklist")}</span>
+      <div className="mt-2 space-y-2">
+        {features.map((f, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={f.text}
+              onChange={(e) => {
+                const next = features.slice();
+                next[i] = { ...next[i], text: e.target.value };
+                onChange(next);
+              }}
+              placeholder={t(`${Su}.featureTextPlaceholder`, "e.g. Monthly reviews")}
+              className="flex-1 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-1.5 text-sm text-[var(--color-foreground)]"
+            />
+            <label className="flex items-center gap-1 whitespace-nowrap text-xs text-[var(--color-foreground)]">
+              <input
+                type="checkbox"
+                checked={f.included}
+                onChange={(e) => {
+                  const next = features.slice();
+                  next[i] = { ...next[i], included: e.target.checked };
+                  onChange(next);
+                }}
+                className="h-4 w-4 rounded border-[var(--color-border)]"
+              />
+              {t(`${Su}.featureIncluded`, "Included")}
+            </label>
+            <button
+              type="button"
+              onClick={() => onChange(features.filter((_, idx) => idx !== i))}
+              className="text-red-600 hover:underline dark:text-red-400"
+              aria-label={t(`${Su}.featureRemove`, "Remove")}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange([...features, { text: "", included: true }])}
+        className="mt-2 text-sm text-[var(--color-primary)] hover:underline"
+      >
+        {t(`${Su}.featureAdd`, "+ Add feature")}
+      </button>
+    </div>
+  );
+}
 
 export function SubscriptionsAdminClient({
   initialEnabled,
@@ -49,6 +121,10 @@ export function SubscriptionsAdminClient({
   const [imageUrl, setImageUrl] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
   const [imageError, setImageError] = useState("");
+  const [badgeLabel, setBadgeLabel] = useState("");
+  const [isFeatured, setIsFeatured] = useState(false);
+  const [iconKey, setIconKey] = useState<(typeof ICON_OPTIONS)[number]>("shield");
+  const [features, setFeatures] = useState<PlanFeatureRow[]>([]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -61,6 +137,10 @@ export function SubscriptionsAdminClient({
   const [editLoading, setEditLoading] = useState(false);
   const [editImageUploading, setEditImageUploading] = useState(false);
   const [editImageError, setEditImageError] = useState("");
+  const [editBadgeLabel, setEditBadgeLabel] = useState("");
+  const [editIsFeatured, setEditIsFeatured] = useState(false);
+  const [editIconKey, setEditIconKey] = useState<(typeof ICON_OPTIONS)[number]>("shield");
+  const [editFeatures, setEditFeatures] = useState<PlanFeatureRow[]>([]);
 
   const reloadPlans = useCallback(async () => {
     const res = await fetch("/api/dashboard/subscription-plans", { credentials: "include" });
@@ -109,6 +189,10 @@ export function SubscriptionsAdminClient({
         durationKind,
         price: p,
         imageUrl: imageUrl.trim() || null,
+        badgeLabel: badgeLabel.trim() || null,
+        isFeatured,
+        iconKey,
+        features,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -124,6 +208,10 @@ export function SubscriptionsAdminClient({
     setPrice("");
     setImageUrl("");
     setImageError("");
+    setBadgeLabel("");
+    setIsFeatured(false);
+    setIconKey("shield");
+    setFeatures([]);
     await reloadPlans();
     router.refresh();
   }
@@ -139,6 +227,10 @@ export function SubscriptionsAdminClient({
     setEditImageUrl(row.imageUrl ?? "");
     setEditActive(row.isActive);
     setEditImageError("");
+    setEditBadgeLabel(row.badgeLabel ?? "");
+    setEditIsFeatured(row.isFeatured);
+    setEditIconKey(ICON_OPTIONS.includes(row.iconKey as (typeof ICON_OPTIONS)[number]) ? (row.iconKey as (typeof ICON_OPTIONS)[number]) : "shield");
+    setEditFeatures(row.features ?? []);
     setEditOpen(true);
   }
 
@@ -170,6 +262,10 @@ export function SubscriptionsAdminClient({
         price: p,
         imageUrl: editImageUrl.trim() || null,
         isActive: editActive,
+        badgeLabel: editBadgeLabel.trim() || null,
+        isFeatured: editIsFeatured,
+        iconKey: editIconKey,
+        features: editFeatures,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -215,6 +311,25 @@ export function SubscriptionsAdminClient({
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       setError(data.error ?? t(`${Su}.toggleFailed`));
+      return;
+    }
+    await reloadPlans();
+    router.refresh();
+  }
+
+  async function reorderPlan(index: number, direction: "up" | "down") {
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= plans.length) return;
+    setError("");
+    const res = await fetch("/api/dashboard/subscription-plans", {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idA: plans[index].id, idB: plans[targetIndex].id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error ?? t(`${Su}.reorderFailed`, "Failed to reorder"));
       return;
     }
     await reloadPlans();
@@ -328,6 +443,43 @@ export function SubscriptionsAdminClient({
             />
           </div>
           <div>
+            <label className="block text-sm font-medium text-[var(--color-foreground)]">
+              {t(`${Su}.labelBadgeLabel`, "Badge text (overrides duration label, e.g. \"Full term\")")}
+            </label>
+            <input
+              type="text"
+              value={badgeLabel}
+              onChange={(e) => setBadgeLabel(e.target.value)}
+              placeholder={t(`${Su}.badgeLabelPlaceholder`, "Leave empty to show the duration label")}
+              className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)]"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.labelIcon`, "Card icon")}</label>
+            <select
+              value={iconKey}
+              onChange={(e) => setIconKey(e.target.value as (typeof ICON_OPTIONS)[number])}
+              className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)]"
+            >
+              <option value="shield">{t(`${Su}.iconShield`, "Shield")}</option>
+              <option value="crown">{t(`${Su}.iconCrown`, "Crown")}</option>
+              <option value="star">{t(`${Su}.iconStar`, "Star")}</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="create-plan-featured"
+              type="checkbox"
+              checked={isFeatured}
+              onChange={(e) => setIsFeatured(e.target.checked)}
+              className="h-4 w-4 rounded border-[var(--color-border)]"
+            />
+            <label htmlFor="create-plan-featured" className="text-sm text-[var(--color-foreground)]">
+              {t(`${Su}.featuredCheckbox`, "Most popular (highlighted on homepage)")}
+            </label>
+          </div>
+          <FeaturesEditor features={features} onChange={setFeatures} t={t} Su={Su} />
+          <div>
             <span className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.packageImageOptional`)}</span>
             {imageUrl ? (
               <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -377,6 +529,7 @@ export function SubscriptionsAdminClient({
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-[var(--color-muted)]">
+                <th className={thClass}>{t(`${Su}.colOrder`, "Order")}</th>
                 <th className={thClass}>{t(`${Su}.colImage`)}</th>
                 <th className={thClass}>{t(`${Su}.colName`)}</th>
                 <th className={thClass}>{t(`${Su}.colDuration`)}</th>
@@ -388,13 +541,35 @@ export function SubscriptionsAdminClient({
             <tbody>
               {plans.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-[var(--color-muted)]">
+                  <td colSpan={7} className="px-4 py-8 text-center text-[var(--color-muted)]">
                     {t(`${Su}.emptyPlans`)}
                   </td>
                 </tr>
               ) : (
-                plans.map((row) => (
+                plans.map((row, index) => (
                   <tr key={row.id} className="border-b border-[var(--color-border)]/60">
+                    <td className="px-3 py-2">
+                      <div className="flex flex-col gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => void reorderPlan(index, "up")}
+                          disabled={index === 0}
+                          className="text-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-30"
+                          aria-label={t(`${Su}.moveUp`, "Move up")}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void reorderPlan(index, "down")}
+                          disabled={index === plans.length - 1}
+                          className="text-[var(--color-muted)] hover:text-[var(--color-foreground)] disabled:opacity-30"
+                          aria-label={t(`${Su}.moveDown`, "Move down")}
+                        >
+                          ↓
+                        </button>
+                      </div>
+                    </td>
                     <td className="px-3 py-2">
                       {row.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -403,8 +578,15 @@ export function SubscriptionsAdminClient({
                         <span className="text-[var(--color-muted)]">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 font-medium">{row.name}</td>
-                    <td className="px-3 py-2 text-[var(--color-muted)]">{dkLabel(row.durationKind)}</td>
+                    <td className="px-3 py-2 font-medium">
+                      {row.name}
+                      {row.isFeatured ? (
+                        <span className="mr-2 rounded-full bg-[var(--color-accent)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent)]">
+                          {t(`${Su}.featuredBadge`, "Most popular")}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2 text-[var(--color-muted)]">{row.badgeLabel || dkLabel(row.durationKind)}</td>
                     <td className="px-3 py-2 tabular-nums">{Number(row.price).toFixed(2)} {egp}</td>
                     <td className="px-3 py-2">
                       <button
@@ -512,6 +694,43 @@ export function SubscriptionsAdminClient({
                   className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)]"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">
+                  {t(`${Su}.labelBadgeLabel`, "Badge text (overrides duration label, e.g. \"Full term\")")}
+                </label>
+                <input
+                  type="text"
+                  value={editBadgeLabel}
+                  onChange={(e) => setEditBadgeLabel(e.target.value)}
+                  placeholder={t(`${Su}.badgeLabelPlaceholder`, "Leave empty to show the duration label")}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.labelIcon`, "Card icon")}</label>
+                <select
+                  value={editIconKey}
+                  onChange={(e) => setEditIconKey(e.target.value as (typeof ICON_OPTIONS)[number])}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)]"
+                >
+                  <option value="shield">{t(`${Su}.iconShield`, "Shield")}</option>
+                  <option value="crown">{t(`${Su}.iconCrown`, "Crown")}</option>
+                  <option value="star">{t(`${Su}.iconStar`, "Star")}</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="edit-plan-featured"
+                  type="checkbox"
+                  checked={editIsFeatured}
+                  onChange={(e) => setEditIsFeatured(e.target.checked)}
+                  className="h-4 w-4 rounded border-[var(--color-border)]"
+                />
+                <label htmlFor="edit-plan-featured" className="text-sm text-[var(--color-foreground)]">
+                  {t(`${Su}.featuredCheckbox`, "Most popular (highlighted on homepage)")}
+                </label>
+              </div>
+              <FeaturesEditor features={editFeatures} onChange={setEditFeatures} t={t} Su={Su} />
               <div>
                 <span className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.packageImageOptional`)}</span>
                 {editImageUrl ? (

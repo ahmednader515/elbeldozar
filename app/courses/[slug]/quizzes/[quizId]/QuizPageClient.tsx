@@ -17,6 +17,7 @@ export type QuizApiPayload = {
     type: string;
     questionText: string;
     order: number;
+    maxScore?: number | null;
     options: Array<{ id: string; text: string; isCorrect: boolean }>;
   }>;
   /** من API: هل يمكن بدء محاولة جديدة؟ */

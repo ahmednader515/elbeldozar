@@ -20,7 +20,7 @@ import {
 
 type LessonInput = { title: string; titleAr?: string; videoUrl?: string; content?: string; pdfUrl?: string; acceptsHomework?: boolean };
 type QuestionOptionInput = { text: string; isCorrect: boolean };
-type QuestionInput = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionInput[] };
+type QuestionInput = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionInput[]; maxScore?: number };
 type QuizInput = { title: string; timeLimitMinutes?: number | null; questions: QuestionInput[] };
 type ContentOrderEntry = { type: "lesson"; index: number } | { type: "quiz"; index: number };
 
@@ -188,6 +188,7 @@ export async function PUT(
         type: qType,
         question_text: qt.questionText?.trim() || "",
         order: qti + 1,
+        max_score: qType === "ESSAY" ? qt.maxScore : undefined,
       });
       if ((qt.type === "MULTIPLE_CHOICE" || qt.type === "TRUE_FALSE") && Array.isArray(qt.options)) {
         for (const opt of qt.options) {
@@ -258,6 +259,7 @@ export async function GET(
         type: qt.type,
         questionText: qt.questionText ?? qt.question_text,
         options: (qt.options ?? []).map((o) => ({ text: o.text, isCorrect: o.isCorrect ?? o.is_correct })),
+        maxScore: (qt as { maxScore?: number | null; max_score?: number | null }).maxScore ?? (qt as { max_score?: number | null }).max_score ?? null,
       })),
     })),
   };

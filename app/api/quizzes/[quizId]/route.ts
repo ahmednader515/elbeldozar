@@ -6,10 +6,11 @@ import {
   getEnrollment,
   getAllowedQuizIdsForUserCourse,
   countCompletedQuizAttemptsByUserAndCourse,
-  createQuizAttempt,
+  createQuizAttemptReturningId,
   updateQuizAttemptById,
   hasFullCourseAccessAsStudent,
   canUserAccessQuiz,
+  saveQuizEssayAnswers,
 } from "@/lib/db";
 
 /**
@@ -96,6 +97,7 @@ export async function GET(
         type: q.type,
         questionText: q.questionText ?? q.question_text,
         order: q.order,
+        maxScore: (q as { maxScore?: number | null; max_score?: number | null }).maxScore ?? (q as { max_score?: number | null }).max_score ?? null,
         options: (q.options ?? []).map((o: Record<string, unknown>) => ({
           id: o.id,
           text: o.text,
@@ -140,7 +142,12 @@ export async function POST(
       return NextResponse.json({ error: "معرّف الاختبار غير صالح" }, { status: 400 });
     }
 
-    let body: { score?: number; totalQuestions?: number; attemptId?: string | null };
+    let body: {
+      score?: number;
+      totalQuestions?: number;
+      attemptId?: string | null;
+      essayAnswers?: Array<{ questionId?: string; answerText?: string }>;
+    };
     try {
       body = await request.json();
     } catch {
@@ -179,6 +186,7 @@ export async function POST(
       }
     }
 
+    let finalAttemptId: string | null = attemptId;
     if (attemptId) {
       const ok = await updateQuizAttemptById({
         attemptId,
@@ -188,11 +196,37 @@ export async function POST(
         totalQuestions,
       });
       if (!ok) {
-        await createQuizAttempt(session.user.id, quizId, score, totalQuestions);
+        finalAttemptId = await createQuizAttemptReturningId(session.user.id, quizId, score, totalQuestions);
       }
     } else {
-      await createQuizAttempt(session.user.id, quizId, score, totalQuestions);
+      finalAttemptId = await createQuizAttemptReturningId(session.user.id, quizId, score, totalQuestions);
     }
+
+    if (finalAttemptId && Array.isArray(body.essayAnswers) && body.essayAnswers.length > 0) {
+      const essayQuestions = new Map(
+        result.questions.filter((q) => q.type === "ESSAY").map((q) => [q.id as string, q])
+      );
+      const essayAnswers = body.essayAnswers
+        .filter(
+          (a): a is { questionId: string; answerText?: string } =>
+            !!a && typeof a.questionId === "string" && essayQuestions.has(a.questionId)
+        )
+        .map((a) => {
+          const q = essayQuestions.get(a.questionId)!;
+          const maxScore = Number((q as { maxScore?: number | null; max_score?: number | null }).maxScore ?? (q as { max_score?: number | null }).max_score ?? 5) || 5;
+          return { questionId: a.questionId, answerText: String(a.answerText ?? "").slice(0, 20000), maxScore };
+        });
+      if (essayAnswers.length > 0) {
+        await saveQuizEssayAnswers({
+          attemptId: finalAttemptId,
+          userId: session.user.id,
+          quizId,
+          courseId,
+          answers: essayAnswers,
+        });
+      }
+    }
+
     return NextResponse.json({ success: true });
   } catch (e) {
     console.error("API quizzes [quizId] POST:", e);

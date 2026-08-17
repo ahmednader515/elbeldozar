@@ -71,6 +71,9 @@ export default async function StatisticsPage() {
           quizTitle: a.quizTitle,
           score: a.score,
           totalQuestions: a.totalQuestions,
+          essayAwardedScore: a.essayAwardedScore,
+          essayMaxScore: a.essayMaxScore,
+          essayPendingCount: a.essayPendingCount,
           createdAt: typeof a.createdAt === "string" ? a.createdAt : a.createdAt.toISOString(),
         })),
       };
@@ -110,6 +113,9 @@ export default async function StatisticsPage() {
     quizTitle: a.quizTitle,
     score: a.score,
     totalQuestions: a.totalQuestions,
+    essayAwardedScore: a.essayAwardedScore,
+    essayMaxScore: a.essayMaxScore,
+    essayPendingCount: a.essayPendingCount,
     createdAt: typeof a.createdAt === "string" ? a.createdAt : a.createdAt.toISOString(),
   }));
 
@@ -130,6 +136,9 @@ export default async function StatisticsPage() {
         quizTitle: a.quizTitle,
         score: a.score,
         totalQuestions: a.totalQuestions,
+        essayAwardedScore: a.essayAwardedScore,
+        essayMaxScore: a.essayMaxScore,
+        essayPendingCount: a.essayPendingCount,
         createdAt: typeof a.createdAt === "string" ? a.createdAt : a.createdAt.toISOString(),
       })),
     };

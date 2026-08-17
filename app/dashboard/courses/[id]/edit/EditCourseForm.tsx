@@ -8,13 +8,12 @@ import { CourseFormSaveOverlay } from "../../CourseFormSaveOverlay";
 type CategoryOption = { id: string; name: string; nameAr?: string | null };
 type LessonRow = { title: string; videoUrl: string; content: string; pdfUrl: string; acceptsHomework: boolean };
 type QuestionOptionRow = { text: string; isCorrect: boolean };
-type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE"; questionText: string; options: QuestionOptionRow[] };
+type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE" | "ESSAY"; questionText: string; options: QuestionOptionRow[]; maxScore: string };
 type QuizRow = { title: string; timeLimitMinutes: string; questions: QuestionRow[] };
 
 export type ContentOrderEntry = { type: "lesson"; index: number } | { type: "quiz"; index: number };
 
-/** API payloads may include legacy ESSAY questions. */
-type InitialQuestionRow = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionRow[] };
+type InitialQuestionRow = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionRow[]; maxScore?: number | null };
 type InitialQuizRow = { title: string; timeLimitMinutes?: number | null; questions: InitialQuestionRow[] };
 
 type InitialData = {
@@ -36,7 +35,7 @@ type InitialData = {
 };
 
 const defaultLesson: LessonRow = { title: "", videoUrl: "", content: "", pdfUrl: "", acceptsHomework: false };
-const defaultQuiz: QuizRow = { title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }] }] };
+const defaultQuiz: QuizRow = { title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }], maxScore: "" }] };
 
 export function EditCourseForm({ courseId, initialData }: { courseId: string; initialData: InitialData }) {
   const router = useRouter();
@@ -112,18 +111,21 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
           timeLimitMinutes: q.timeLimitMinutes != null ? String(q.timeLimitMinutes) : "",
           questions: q.questions.length > 0
             ? q.questions.map((qt) => {
-                const type = qt.type === "ESSAY" ? "MULTIPLE_CHOICE" as const : qt.type;
+                const type = qt.type;
                 const options =
-                  qt.type === "TRUE_FALSE"
-                    ? qt.options?.length
-                      ? qt.options
-                      : tfPair()
-                    : qt.options?.length
-                      ? qt.options
-                      : [{ text: "", isCorrect: false }];
-                return { type, questionText: qt.questionText, options };
+                  type === "ESSAY"
+                    ? []
+                    : type === "TRUE_FALSE"
+                      ? qt.options?.length
+                        ? qt.options
+                        : tfPair()
+                      : qt.options?.length
+                        ? qt.options
+                        : [{ text: "", isCorrect: false }];
+                const maxScore = qt.maxScore != null ? String(qt.maxScore) : "";
+                return { type, questionText: qt.questionText, options, maxScore };
               })
-            : [{ type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }] }],
+            : [{ type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }], maxScore: "" }],
         }))
       : [defaultQuiz]
   );
@@ -176,7 +178,7 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
   function addQuestion(qi: number) {
     setQuizzes((q) =>
       q.map((x, i) =>
-        i === qi ? { ...x, questions: [...x.questions, { type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }] }] } : x
+        i === qi ? { ...x, questions: [...x.questions, { type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }], maxScore: "" }] } : x
       )
     );
   }
@@ -190,7 +192,7 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
       )
     );
   }
-  function setQuestionType(qi: number, qti: number, type: "MULTIPLE_CHOICE" | "TRUE_FALSE") {
+  function setQuestionType(qi: number, qti: number, type: "MULTIPLE_CHOICE" | "TRUE_FALSE" | "ESSAY") {
     setQuizzes((q) =>
       q.map((x, i) =>
         i === qi
@@ -204,11 +206,22 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
                       options:
                         type === "MULTIPLE_CHOICE"
                           ? qt.options.length ? qt.options : [{ text: "", isCorrect: false }]
-                          : tfPair(),
+                          : type === "TRUE_FALSE"
+                            ? tfPair()
+                            : [],
                     }
                   : qt
               ),
             }
+          : x
+      )
+    );
+  }
+  function updateQuestionMaxScore(qi: number, qti: number, value: string) {
+    setQuizzes((q) =>
+      q.map((x, i) =>
+        i === qi
+          ? { ...x, questions: x.questions.map((qt, j) => (j === qti ? { ...qt, maxScore: value } : qt)) }
           : x
       )
     );
@@ -280,6 +293,13 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
                 : qt.type === "TRUE_FALSE"
                   ? qt.options.map((o) => ({ text: o.text, isCorrect: o.isCorrect }))
                   : undefined,
+            maxScore:
+              qt.type === "ESSAY"
+                ? (() => {
+                    const n = parseInt(qt.maxScore, 10);
+                    return Number.isFinite(n) && n >= 1 ? n : undefined;
+                  })()
+                : undefined,
           })),
       }));
     const validLessonIndices = lessons.map((l, i) => (l.title.trim() ? i : -1)).filter((i) => i >= 0);
@@ -580,9 +600,10 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
               <div key={qti} className="mb-4 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-sm font-medium">{t(`${Cf}.questionNPrefix`)}{qti + 1}</span>
-                  <select value={q.type} onChange={(e) => setQuestionType(qi, qti, e.target.value as "MULTIPLE_CHOICE" | "TRUE_FALSE")} className="rounded border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-sm">
+                  <select value={q.type} onChange={(e) => setQuestionType(qi, qti, e.target.value as "MULTIPLE_CHOICE" | "TRUE_FALSE" | "ESSAY")} className="rounded border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-sm">
                     <option value="MULTIPLE_CHOICE">{t(`${Cf}.mcqShort`)}</option>
                     <option value="TRUE_FALSE">{t(`${Cf}.tfShort`)}</option>
+                    <option value="ESSAY">{t(`${Cf}.essayShort`)}</option>
                   </select>
                   {quiz.questions.length > 1 && (
                     <button type="button" onClick={() => removeQuestion(qi, qti)} className="text-sm text-red-600 hover:underline">{t(`${Cf}.deleteQuestionBtn`)}</button>
@@ -628,6 +649,22 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
                     {q.type === "MULTIPLE_CHOICE" && (
                       <button type="button" onClick={() => addOption(qi, qti)} className="text-sm text-[var(--color-primary)] hover:underline">{t(`${Cf}.addOptionBtn`)}</button>
                     )}
+                  </div>
+                )}
+                {q.type === "ESSAY" && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-[var(--color-muted)]">{t(`${Cf}.essayHintLine`)}</p>
+                    <div>
+                      <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.essayMaxScoreLabel`)}</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={q.maxScore}
+                        onChange={(e) => updateQuestionMaxScore(qi, qti, e.target.value)}
+                        placeholder="5"
+                        className="mt-1 w-24 rounded border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-sm"
+                      />
+                    </div>
                   </div>
                 )}
               </div>

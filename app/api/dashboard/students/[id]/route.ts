@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { hash } from "bcryptjs";
 import { authOptions } from "@/lib/auth";
-import { getUserById, getUserByEmailExcludingId, updateUser, clearCurrentSessionId } from "@/lib/db";
+import { getUserById, getUserByEmailExcludingId, updateUser, clearCurrentSessionId, deleteUser } from "@/lib/db";
 
 const ROLES = ["ADMIN", "ASSISTANT_ADMIN", "STUDENT"] as const;
 
@@ -66,6 +66,30 @@ export async function PATCH(
   if (data.role !== undefined) {
     await clearCurrentSessionId(id);
   }
+
+  return NextResponse.json({ success: true });
+}
+
+/** حذف حساب طالب نهائياً — للأدمن فقط، ولا يشمل إلا حسابات الطلاب */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session || session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const targetUser = await getUserById(id);
+  if (!targetUser) {
+    return NextResponse.json({ error: "المستخدم غير موجود" }, { status: 404 });
+  }
+  if (targetUser.role !== "STUDENT") {
+    return NextResponse.json({ error: "يمكن حذف حسابات الطلاب فقط" }, { status: 403 });
+  }
+
+  await deleteUser(id);
 
   return NextResponse.json({ success: true });
 }

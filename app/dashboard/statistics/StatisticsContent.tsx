@@ -16,8 +16,20 @@ type Attempt = {
   quizTitle: string | null;
   score: number;
   totalQuestions: number;
+  essayAwardedScore?: number;
+  essayMaxScore?: number;
+  essayPendingCount?: number;
   createdAt: string;
 };
+
+function formatAttemptScore(a: Attempt, pendingLabel: (count: number) => string): string {
+  const essayMax = a.essayMaxScore ?? 0;
+  if (essayMax <= 0) return `${a.score} / ${a.totalQuestions}`;
+  const total = a.score + (a.essayAwardedScore ?? 0);
+  const totalMax = a.totalQuestions + essayMax;
+  const pending = a.essayPendingCount ?? 0;
+  return `${total} / ${totalMax}${pending > 0 ? ` ${pendingLabel(pending)}` : ""}`;
+}
 
 type CourseInfo = { title: string; titleAr: string | null };
 
@@ -173,7 +185,9 @@ export default function StatisticsContent({
                     <td className="px-3 py-2 text-[var(--color-foreground)]">{a.courseTitle}</td>
                     <td className="px-3 py-2 text-[var(--color-foreground)]">{a.quizTitle}</td>
                     <td className="px-3 py-2 text-[var(--color-foreground)]">
-                      {a.score} / {a.totalQuestions}
+                      {formatAttemptScore(a, (n) =>
+                        fillMessage(t(`${pq}.essayPendingSuffix`, "(+{count} essay pending)"), { count: String(n) })
+                      )}
                     </td>
                     <td className="px-3 py-2 text-[var(--color-muted)]">{formatDate(a.createdAt, locale)}</td>
                   </tr>
@@ -228,7 +242,12 @@ export default function StatisticsContent({
                     {t(`${pq}.latestResults`, "Latest results:")}{" "}
                     {userAttempts
                       .slice(0, 3)
-                      .map((a) => `${a.quizTitle} (${a.score}/${a.totalQuestions})`)
+                      .map(
+                        (a) =>
+                          `${a.quizTitle} (${formatAttemptScore(a, (n) =>
+                            fillMessage(t(`${pq}.essayPendingSuffix`, "(+{count} essay pending)"), { count: String(n) })
+                          )})`
+                      )
                       .join(" — ")}
                   </div>
                 )}

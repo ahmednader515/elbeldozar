@@ -44,17 +44,6 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
     (q) => q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE"
   ).length;
 
-  function calculateScore() {
-    let s = 0;
-    quiz.questions.forEach((q) => {
-      if (q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE") {
-        const opt = q.options.find((o) => o.id === answers[q.id]);
-        if (opt?.isCorrect) s++;
-      }
-    });
-    return s;
-  }
-
   function calculateScoreFromAnswers(ans: Record<string, string>) {
     let s = 0;
     quiz.questions.forEach((q) => {
@@ -68,12 +57,18 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
 
   const submitAnswers = useCallback(
     async (reason?: "timeup") => {
-      const s = reason === "timeup" ? calculateScoreFromAnswers(answersRef.current) : calculateScore();
+      // نقرأ answersRef.current (لا answers مباشرة) لأن submitAnswers محفوظة بـ useCallback
+      // ولا تُعاد صياغتها عند كل تغيير إجابة — القراءة من الحالة مباشرة كانت تُرجع دائماً
+      // إجابات وقت إنشاء الدالة (فارغة عادةً) بدل الإجابات الفعلية عند الإرسال.
+      const s = calculateScoreFromAnswers(answersRef.current);
       setFinalScore(s);
       setSubmitting(true);
       setSaveError(null);
       // أظهر النتيجة فوراً حتى لو فشل الحفظ على السيرفر
       setSubmitted(true);
+      const essayAnswers = quiz.questions
+        .filter((q) => q.type === "ESSAY")
+        .map((q) => ({ questionId: q.id, answerText: answersRef.current[q.id] ?? "" }));
       try {
         const res = await fetch(`/api/quizzes/${encodeURIComponent(quiz.id)}`, {
           method: "POST",
@@ -82,6 +77,7 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
             score: s,
             totalQuestions: Math.max(1, totalScored),
             attemptId,
+            essayAnswers,
           }),
         });
         if (!res.ok) {
@@ -243,6 +239,9 @@ export function QuizTake({ quiz }: { quiz: QuizApiPayload }) {
                   : q.type === "TRUE_FALSE"
                     ? t("quiz.trueFalse", "True/False")
                     : t("quiz.essay", "Essay")}
+                {q.type === "ESSAY" && q.maxScore
+                  ? ` — ${t("quiz.essayMaxScorePrefix", "Max score:")} ${q.maxScore}`
+                  : ""}
               </span>
               {q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE" ? (
                 <ul className="mt-4 space-y-2">
