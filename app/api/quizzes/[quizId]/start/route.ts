@@ -6,6 +6,7 @@ import {
   countCompletedQuizAttemptsByUserAndCourse,
   createQuizAttemptReturningId,
   canUserAccessQuiz,
+  getMissingRequiredHomeworkForQuiz,
 } from "@/lib/db";
 
 /** بدء محاولة اختبار: تُحسب محاولة فور الضغط على "ابدأ" */
@@ -44,6 +45,17 @@ export async function POST(
       attemptsUsed = await countCompletedQuizAttemptsByUserAndCourse(session.user.id, courseId);
       if (attemptsUsed >= maxAttempts) {
         return NextResponse.json({ error: "تم استنفاد المحاولات" }, { status: 403 });
+      }
+    }
+
+    if (!isStaff) {
+      const missingHomework = await getMissingRequiredHomeworkForQuiz(session.user.id, quizId);
+      if (missingHomework.length > 0) {
+        const names = missingHomework.map((l) => l.titleAr ?? l.title).join("، ");
+        return NextResponse.json(
+          { error: `يجب رفع واجبات الحصص التالية أولاً: ${names}`, missingHomeworkLessons: missingHomework },
+          { status: 403 },
+        );
       }
     }
 

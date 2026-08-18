@@ -2445,6 +2445,14 @@ async function ensurePlatformSubscriptionSchema(): Promise<void> {
     await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT false`;
     await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS icon_key TEXT NOT NULL DEFAULT 'shield'`;
     await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS features JSONB NOT NULL DEFAULT '[]'`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS "SubscriptionPlanCourse" (
+        plan_id   TEXT NOT NULL REFERENCES "SubscriptionPlan"(id) ON DELETE CASCADE,
+        course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+        PRIMARY KEY (plan_id, course_id)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS "SubscriptionPlanCourse_course_idx" ON "SubscriptionPlanCourse"(course_id)`;
     platformSubscriptionSchemaEnsured = true;
   } catch {
     /* إنشاء الجداول قد يفشل بدون صلاحية CREATE */
@@ -2898,7 +2906,31 @@ export type SubscriptionPlanPublic = {
   features: SubscriptionPlanFeature[];
 };
 
-export type SubscriptionPlanAdmin = SubscriptionPlanPublic & { isActive: boolean; sortOrder: number };
+export type SubscriptionPlanAdmin = SubscriptionPlanPublic & { isActive: boolean; sortOrder: number; courseIds: string[] };
+
+/** الكورسات التي تغطيها باقة معيّنة (فارغة = غير مقيدة، تغطي كل الكورسات المدفوعة) */
+export async function getSubscriptionPlanCourseIds(planId: string): Promise<string[]> {
+  try {
+    await ensurePlatformSubscriptionSchema();
+    const rows = await sql`SELECT course_id FROM "SubscriptionPlanCourse" WHERE plan_id = ${planId}`;
+    return (rows as { course_id: string }[]).map((r) => r.course_id);
+  } catch {
+    return [];
+  }
+}
+
+/** استبدال قائمة الكورسات التي تغطيها باقة — مصفوفة فارغة تعني إزالة القيد (تغطي كل الكورسات) */
+export async function setSubscriptionPlanCourses(planId: string, courseIds: string[]): Promise<void> {
+  await ensurePlatformSubscriptionSchema();
+  await sql`DELETE FROM "SubscriptionPlanCourse" WHERE plan_id = ${planId}`;
+  for (const courseId of courseIds) {
+    await sql`
+      INSERT INTO "SubscriptionPlanCourse" (plan_id, course_id)
+      VALUES (${planId}, ${courseId})
+      ON CONFLICT (plan_id, course_id) DO NOTHING
+    `;
+  }
+}
 
 function parseSubscriptionPlanFeatures(raw: unknown): SubscriptionPlanFeature[] {
   try {
@@ -2954,7 +2986,9 @@ export async function listSubscriptionPlansAll(): Promise<SubscriptionPlanAdmin[
       FROM "SubscriptionPlan"
       ORDER BY sort_order ASC, created_at ASC
     `;
-    return (rows as Record<string, unknown>[]).map((r) => ({
+    const plans = rows as Record<string, unknown>[];
+    const courseIdsByPlan = await Promise.all(plans.map((r) => getSubscriptionPlanCourseIds(String(r.id))));
+    return plans.map((r, i) => ({
       id: String(r.id),
       name: String(r.name ?? ""),
       description: String(r.description ?? ""),
@@ -2967,6 +3001,7 @@ export async function listSubscriptionPlansAll(): Promise<SubscriptionPlanAdmin[
       iconKey: String(r.icon_key ?? "shield"),
       features: parseSubscriptionPlanFeatures(r.features),
       sortOrder: Number(r.sort_order ?? 0),
+      courseIds: courseIdsByPlan[i],
     }));
 }
 
@@ -2981,6 +3016,7 @@ export async function createSubscriptionPlan(data: {
   is_featured?: boolean;
   icon_key?: string;
   features?: SubscriptionPlanFeature[];
+  course_ids?: string[];
 }): Promise<{ id: string }> {
   await ensurePlatformSubscriptionSchema();
   const id = generateId();
@@ -3004,6 +3040,9 @@ export async function createSubscriptionPlan(data: {
       ${featuresJson}
     )
   `;
+  if (data.course_ids && data.course_ids.length > 0) {
+    await setSubscriptionPlanCourses(id, data.course_ids);
+  }
   return { id };
 }
 
@@ -3020,6 +3059,7 @@ export async function updateSubscriptionPlan(
     is_featured?: boolean;
     icon_key?: string;
     features?: SubscriptionPlanFeature[];
+    course_ids?: string[];
   },
 ): Promise<void> {
   await ensurePlatformSubscriptionSchema();
@@ -3043,6 +3083,7 @@ export async function updateSubscriptionPlan(
     await sql`UPDATE "SubscriptionPlan" SET icon_key = ${data.icon_key.trim() || "shield"}, updated_at = NOW() WHERE id = ${id}`;
   if (data.features !== undefined)
     await sql`UPDATE "SubscriptionPlan" SET features = ${JSON.stringify(data.features)}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.course_ids !== undefined) await setSubscriptionPlanCourses(id, data.course_ids);
 }
 
 /** تبديل ترتيب باقتين متجاورتين (لأزرار تحريك لأعلى/أسفل في لوحة التحكم) */
@@ -3109,16 +3150,47 @@ export async function userHasActivePlatformSubscription(userId: string): Promise
   }
 }
 
-/** اشتراك نشط + دورة منشورة + سعرها > 0 ⇒ وصول كامل كمسجّل */
+/** معرّف الباقة المفعّلة حالياً للمستخدم (إن وُجدت) — أحدث اشتراك نشط */
+export async function getActivePlatformSubscriptionPlanId(userId: string): Promise<string | null> {
+  try {
+    await ensurePlatformSubscriptionSchema();
+    const rows = await sql`
+      SELECT plan_id FROM "UserPlatformSubscription"
+      WHERE user_id = ${userId} AND expires_at > NOW()
+      ORDER BY expires_at DESC
+      LIMIT 1
+    `;
+    const r = rows[0] as { plan_id?: string | null } | undefined;
+    return r?.plan_id ? String(r.plan_id) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** هل تغطي هذه الباقة هذا الكورس؟ باقة بلا أي كورس محدد تغطي كل الكورسات (السلوك الافتراضي) */
+export async function doesPlanCoverCourse(planId: string, courseId: string): Promise<boolean> {
+  try {
+    await ensurePlatformSubscriptionSchema();
+    const rows = await sql`SELECT course_id FROM "SubscriptionPlanCourse" WHERE plan_id = ${planId}`;
+    const restricted = rows as { course_id: string }[];
+    if (restricted.length === 0) return true;
+    return restricted.some((r) => r.course_id === courseId);
+  } catch {
+    return true;
+  }
+}
+
+/** اشتراك نشط في باقة تغطي هذا الكورس + دورة منشورة + سعرها > 0 ⇒ وصول كامل كمسجّل */
 export async function userHasActivePlatformSubscriptionForPaidCourse(userId: string, courseId: string): Promise<boolean> {
-  const active = await userHasActivePlatformSubscription(userId);
-  if (!active) return false;
+  const planId = await getActivePlatformSubscriptionPlanId(userId);
+  if (!planId) return false;
   const course = await getCourseById(courseId);
   if (!course) return false;
   const pub = (course as { isPublished?: boolean }).isPublished ?? (course as { is_published?: boolean }).is_published;
   if (!pub) return false;
   const price = Number((course as { price?: unknown }).price) || 0;
-  return price > 0;
+  if (!(price > 0)) return false;
+  return doesPlanCoverCourse(planId, courseId);
 }
 
 /** تسجيل في الدورة أو اشتراك منصة نشط على دورة مدفوعة منشورة */
@@ -4291,12 +4363,17 @@ export async function getAccessibleCoursesForUser(userId: string): Promise<(Cour
       WHERE ac.used_by_user_id = ${userId} AND ac.used_at IS NOT NULL
     )
     OR (
-      EXISTS (
-        SELECT 1 FROM "UserPlatformSubscription" ups
-        WHERE ups.user_id = ${userId} AND ups.expires_at > NOW()
-      )
-      AND c.is_published = true
+      c.is_published = true
       AND COALESCE(c.price, 0) > 0
+      AND EXISTS (
+        SELECT 1 FROM "UserPlatformSubscription" ups
+        JOIN "SubscriptionPlan" sp ON sp.id = ups.plan_id
+        WHERE ups.user_id = ${userId} AND ups.expires_at > NOW()
+        AND (
+          NOT EXISTS (SELECT 1 FROM "SubscriptionPlanCourse" spc WHERE spc.plan_id = sp.id)
+          OR EXISTS (SELECT 1 FROM "SubscriptionPlanCourse" spc2 WHERE spc2.plan_id = sp.id AND spc2.course_id = c.id)
+        )
+      )
     )
     ORDER BY c.created_at DESC
   `;
@@ -4755,6 +4832,48 @@ export async function deleteHomeworkSubmissionsByIds(ids: string[]): Promise<num
 export async function deleteAllHomeworkSubmissions(): Promise<void> {
   await ensureHomeworkSubmissionSchema();
   await sql`DELETE FROM "HomeworkSubmission"`;
+}
+
+/**
+ * الحصص "تقبل واجب" الواقعة بين هذا الاختبار وآخر اختبار سابقه في نفس الكورس (أو بداية الكورس)
+ * والتي لم يرفع لها الطالب واجباً بعد — تُستخدم لقفل الاختبار حتى تسليم الواجبات المطلوبة.
+ */
+export async function getMissingRequiredHomeworkForQuiz(
+  userId: string,
+  quizId: string,
+): Promise<Array<{ id: string; title: string; titleAr: string | null }>> {
+  await ensureHomeworkSubmissionSchema();
+  try {
+    const rows = await sql`
+      WITH q AS (
+        SELECT course_id, "order" FROM "Quiz" WHERE id = ${quizId}
+      ),
+      prev_quiz AS (
+        SELECT COALESCE(MAX(qz."order"), -1) AS ord
+        FROM "Quiz" qz, q
+        WHERE qz.course_id = q.course_id AND qz."order" < q."order"
+      )
+      SELECT l.id, l.title, l.title_ar
+      FROM "Lesson" l, q, prev_quiz pq
+      WHERE l.course_id = q.course_id
+        AND l.accepts_homework = true
+        AND l."order" > pq.ord
+        AND l."order" < q."order"
+        AND NOT EXISTS (
+          SELECT 1 FROM "HomeworkSubmission" hs
+          WHERE hs.lesson_id = l.id AND hs.user_id = ${userId}
+        )
+      ORDER BY l."order" ASC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id),
+      title: String(r.title ?? ""),
+      titleAr: r.title_ar ? String(r.title_ar) : null,
+    }));
+  } catch (e) {
+    console.error("getMissingRequiredHomeworkForQuiz:", e);
+    return [];
+  }
 }
 
 // ----- QuizAttempt (يتطلب تشغيل scripts/add-quiz-attempts.sql) -----

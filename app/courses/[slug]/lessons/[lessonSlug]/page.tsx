@@ -56,8 +56,8 @@ function quizHref(course: { slug?: string | null; id: string }, quizId: string):
 }
 
 type CourseItem =
-  | { type: "lesson"; id: string; slug?: string | null; title: string; titleAr?: string | null }
-  | { type: "quiz"; id: string; title: string; _count?: { questions?: number } };
+  | { type: "lesson"; id: string; slug?: string | null; title: string; titleAr?: string | null; order: number }
+  | { type: "quiz"; id: string; title: string; _count?: { questions?: number }; order: number };
 
 export default async function LessonPage({ params }: Props) {
   const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
@@ -150,9 +150,9 @@ export default async function LessonPage({ params }: Props) {
       ? quizzesAll.filter((q) => allowedQuizIds.includes(String(q.id)))
       : quizzesAll;
   const items: CourseItem[] = [
-    ...lessons.map((l) => ({ type: "lesson" as const, id: l.id, slug: (l as Record<string, unknown>).slug as string | null, title: String(l.title ?? ""), titleAr: l.titleAr })),
-    ...quizzes.map((q) => ({ type: "quiz" as const, id: q.id, title: String(q.title ?? ""), _count: q._count })),
-  ];
+    ...lessons.map((l) => ({ type: "lesson" as const, id: l.id, slug: (l as Record<string, unknown>).slug as string | null, title: String(l.title ?? ""), titleAr: l.titleAr, order: Number((l as Record<string, unknown>).order ?? 0) })),
+    ...quizzes.map((q) => ({ type: "quiz" as const, id: q.id, title: String(q.title ?? ""), _count: q._count, order: Number((q as Record<string, unknown>).order ?? 0) })),
+  ].sort((a, b) => a.order - b.order);
   const currentIndex = items.findIndex((i) => i.type === "lesson" && i.id === lessonObj.id);
   const prevItem = currentIndex > 0 ? items[currentIndex - 1] : null;
   const nextItem = currentIndex >= 0 && currentIndex < items.length - 1 ? items[currentIndex + 1] : null;

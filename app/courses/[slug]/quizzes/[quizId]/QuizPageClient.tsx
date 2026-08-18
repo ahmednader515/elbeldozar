@@ -26,6 +26,8 @@ export type QuizApiPayload = {
   attemptsUsed?: number;
   /** من API: الحد الأقصى للمحاولات داخل الكورس */
   maxQuizAttempts?: number | null;
+  /** من API: حصص "تقبل واجب" لم يُرفع لها واجب بعد وتمنع دخول الاختبار */
+  missingHomeworkLessons?: Array<{ id: string; title: string; titleAr: string | null }>;
 };
 
 export function QuizPageClient({ quizId }: { quizId: string }) {
@@ -99,6 +101,7 @@ export function QuizPageClient({ quizId }: { quizId: string }) {
     : `/courses/${quiz.course.id}`;
 
   const q = quiz as QuizApiPayload & { canAttempt?: boolean; attemptsUsed?: number; maxQuizAttempts?: number | null };
+  const missingHomework = q.missingHomeworkLessons ?? [];
   if (q.canAttempt === false) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
@@ -107,10 +110,23 @@ export function QuizPageClient({ quizId }: { quizId: string }) {
         </Link>
         <div className="mt-4 rounded-[var(--radius-card)] border border-amber-500/50 bg-amber-500/10 p-6">
           <h1 className="text-xl font-bold text-[var(--color-foreground)]">{quiz.title}</h1>
-          <p className="mt-2 text-[var(--color-foreground)]">
-            {t("quiz.attemptsLimitReached", "You have reached the allowed attempts for this quiz in this course.")}
-            {q.maxQuizAttempts != null && <span className="mr-1">({t("quiz.limitLabel", "Limit:")} {q.maxQuizAttempts} {t("quiz.attemptsLabel", "attempts")})</span>}
-          </p>
+          {missingHomework.length > 0 ? (
+            <>
+              <p className="mt-2 text-[var(--color-foreground)]">
+                {t("quiz.homeworkRequired", "You must submit the homework for the following lessons before entering this quiz:")}
+              </p>
+              <ul className="mt-2 list-inside list-disc text-[var(--color-foreground)]">
+                {missingHomework.map((l) => (
+                  <li key={l.id}>{l.titleAr ?? l.title}</li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="mt-2 text-[var(--color-foreground)]">
+              {t("quiz.attemptsLimitReached", "You have reached the allowed attempts for this quiz in this course.")}
+              {q.maxQuizAttempts != null && <span className="mr-1">({t("quiz.limitLabel", "Limit:")} {q.maxQuizAttempts} {t("quiz.attemptsLabel", "attempts")})</span>}
+            </p>
+          )}
         </div>
       </div>
     );

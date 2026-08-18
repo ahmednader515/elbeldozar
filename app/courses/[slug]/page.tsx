@@ -150,6 +150,15 @@ export default async function CoursePage({ params }: Props) {
     hasPartialAccess && !isEnrolled && !hasFullStudentAccess && !isStaff
       ? (course.quizzes ?? []).filter((q) => allowedQuizIds.includes(String((q as { id?: string }).id ?? "")))
       : (course.quizzes ?? []);
+  const visibleLessons =
+    hasPartialAccess && !isEnrolled && !isStaff
+      ? course.lessons.filter((l) => allowedLessonIds.includes(String((l as Record<string, unknown>).id ?? l.id)))
+      : course.lessons;
+  const itemOrder = (x: Record<string, unknown>) => Number(x.order ?? 0);
+  const mergedContent = [
+    ...visibleLessons.map((l) => ({ type: "lesson" as const, order: itemOrder(l as Record<string, unknown>), data: l })),
+    ...visibleQuizzes.map((q) => ({ type: "quiz" as const, order: itemOrder(q as Record<string, unknown>), data: q })),
+  ].sort((a, b) => a.order - b.order);
   const coursePrice = Number((course as Record<string, unknown>).price) || 0;
 
   const liveStreams = canAccessContent ? await getLiveStreamsByCourseId(course.id) : [];
@@ -338,70 +347,58 @@ export default async function CoursePage({ params }: Props) {
               </div>
             )}
 
-            {course.lessons.length > 0 && (
+            {mergedContent.length > 0 && (
               <div className="mt-10">
                 <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
-                  {t("courses.courseContent", "Course content")} ({course.lessons.length} {t("courses.lessonsCount", "lessons")})
+                  {t("courses.courseContent", "Course content")} ({mergedContent.length})
                 </h2>
                 <ul className="mt-4 space-y-2">
-                  {(hasPartialAccess && !isEnrolled && !isStaff
-                    ? course.lessons.filter((l) => allowedLessonIds.includes(String((l as Record<string, unknown>).id ?? l.id)))
-                    : course.lessons
-                  ).map((lesson, i) => {
-                    const lessonClassName = `flex items-center gap-3 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-3 ${canAccessContent ? "transition hover:border-[var(--color-primary)]/30" : ""}`;
-                    const content = (
-                      <>
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)]/20 text-sm font-medium text-[var(--color-primary)]">
-                          {i + 1}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <span className="font-medium text-[var(--color-foreground)]">
-                            {String((lesson as Record<string, unknown>).titleAr ?? (lesson as Record<string, unknown>).title ?? "")}
+                  {mergedContent.map((item, i) => {
+                    if (item.type === "lesson") {
+                      const lesson = item.data;
+                      const lessonClassName = `flex items-center gap-3 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-3 ${canAccessContent ? "transition hover:border-[var(--color-primary)]/30" : ""}`;
+                      const content = (
+                        <>
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)]/20 text-sm font-medium text-[var(--color-primary)]">
+                            {i + 1}
                           </span>
-                          {(lesson as Record<string, unknown>).duration ? (
-                            <span className="mr-2 text-sm text-[var(--color-muted)]">
-                              • {String((lesson as Record<string, unknown>).duration)} {t("courses.minutes", "minutes")}
+                          <div className="min-w-0 flex-1">
+                            <span className="font-medium text-[var(--color-foreground)]">
+                              {String((lesson as Record<string, unknown>).titleAr ?? (lesson as Record<string, unknown>).title ?? "")}
                             </span>
-                          ) : null}
-                          {(lesson as Record<string, unknown>).videoUrl && canAccessContent ? (
-                            <span className="mr-2 text-xs text-[var(--color-primary)]">▶ {t("courses.videoTag", "Video")}</span>
-                          ) : null}
-                        </div>
-                      </>
-                    );
-                    const courseSlugOrId = String((course as Record<string, unknown>).slug ?? "").trim() || String((course as Record<string, unknown>).id ?? course.id);
-                    const lessonSlugOrId = (lesson as Record<string, unknown>).slug && String((lesson as Record<string, unknown>).slug).trim()
-                      ? encodeURIComponent(String((lesson as Record<string, unknown>).slug).trim())
-                      : String((lesson as Record<string, unknown>).id ?? lesson.id);
-                    return (
-                      <li key={String(lesson.id)}>
-                        {canAccessContent ? (
-                          <Link
-                            href={`/courses/${courseSlugOrId}/lessons/${lessonSlugOrId}`}
-                            className={lessonClassName}
-                          >
-                            {content}
-                          </Link>
-                        ) : (
-                          <div className={lessonClassName}>
-                            {content}
+                            {(lesson as Record<string, unknown>).duration ? (
+                              <span className="mr-2 text-sm text-[var(--color-muted)]">
+                                • {String((lesson as Record<string, unknown>).duration)} {t("courses.minutes", "minutes")}
+                              </span>
+                            ) : null}
+                            {(lesson as Record<string, unknown>).videoUrl && canAccessContent ? (
+                              <span className="mr-2 text-xs text-[var(--color-primary)]">▶ {t("courses.videoTag", "Video")}</span>
+                            ) : null}
                           </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-
-            {visibleQuizzes.length > 0 && (
-              <div className="mt-10">
-                <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
-                  {t("courses.quizzes", "Quizzes")} ({visibleQuizzes.length})
-                </h2>
-                <ul className="mt-4 space-y-2">
-                  {visibleQuizzes.map((quiz) => {
-                    const q = quiz as Record<string, unknown> & { _count?: { questions?: number } };
+                        </>
+                      );
+                      const courseSlugOrId = String((course as Record<string, unknown>).slug ?? "").trim() || String((course as Record<string, unknown>).id ?? course.id);
+                      const lessonSlugOrId = (lesson as Record<string, unknown>).slug && String((lesson as Record<string, unknown>).slug).trim()
+                        ? encodeURIComponent(String((lesson as Record<string, unknown>).slug).trim())
+                        : String((lesson as Record<string, unknown>).id ?? lesson.id);
+                      return (
+                        <li key={`l-${String(lesson.id)}`}>
+                          {canAccessContent ? (
+                            <Link
+                              href={`/courses/${courseSlugOrId}/lessons/${lessonSlugOrId}`}
+                              className={lessonClassName}
+                            >
+                              {content}
+                            </Link>
+                          ) : (
+                            <div className={lessonClassName}>
+                              {content}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    }
+                    const q = item.data as Record<string, unknown> & { _count?: { questions?: number } };
                     const questionsCount = q._count?.questions ?? 0;
                     const quizAllowed =
                       canAccessQuizzes &&
@@ -410,23 +407,34 @@ export default async function CoursePage({ params }: Props) {
                         isEnrolled ||
                         allowedQuizIds.includes(String(q.id)));
                     return (
-                    <li key={String(q.id)}>
-                      {quizAllowed ? (
-                        <Link
-                          href={`/courses/${encodeURIComponent(normalizeSlugForUrl(String((course as Record<string, unknown>).slug ?? "")) || String((course as Record<string, unknown>).id ?? course.id))}/quizzes/${String(q.id)}`}
-                          className="flex items-center justify-between rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4 transition hover:border-[var(--color-primary)]/30"
-                        >
-                          <span className="font-medium text-[var(--color-foreground)]">{String(q.title ?? "")}</span>
-                          <span className="text-sm text-[var(--color-muted)]">{questionsCount} {t("courses.questions", "questions")}</span>
-                        </Link>
-                      ) : (
-                        <div className="flex items-center justify-between rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4 opacity-75">
-                          <span className="font-medium text-[var(--color-foreground)]">{String(q.title ?? "")}</span>
-                          <span className="text-sm text-[var(--color-muted)]">{questionsCount} {t("courses.questions", "questions")}</span>
-                        </div>
-                      )}
-                    </li>
-                  );})}
+                      <li key={`q-${String(q.id)}`}>
+                        {quizAllowed ? (
+                          <Link
+                            href={`/courses/${encodeURIComponent(normalizeSlugForUrl(String((course as Record<string, unknown>).slug ?? "")) || String((course as Record<string, unknown>).id ?? course.id))}/quizzes/${String(q.id)}`}
+                            className="flex items-center gap-3 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4 transition hover:border-[var(--color-primary)]/30"
+                          >
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)]/20 text-sm font-medium text-[var(--color-primary)]">
+                              {i + 1}
+                            </span>
+                            <span className="min-w-0 flex-1 font-medium text-[var(--color-foreground)]">
+                              {t("courses.testPrefix", "Quiz:")} {String(q.title ?? "")}
+                            </span>
+                            <span className="shrink-0 text-sm text-[var(--color-muted)]">{questionsCount} {t("courses.questions", "questions")}</span>
+                          </Link>
+                        ) : (
+                          <div className="flex items-center gap-3 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4 opacity-75">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)]/20 text-sm font-medium text-[var(--color-primary)]">
+                              {i + 1}
+                            </span>
+                            <span className="min-w-0 flex-1 font-medium text-[var(--color-foreground)]">
+                              {t("courses.testPrefix", "Quiz:")} {String(q.title ?? "")}
+                            </span>
+                            <span className="shrink-0 text-sm text-[var(--color-muted)]">{questionsCount} {t("courses.questions", "questions")}</span>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}

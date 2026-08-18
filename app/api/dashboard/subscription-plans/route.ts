@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
     isFeatured?: boolean;
     iconKey?: string;
     features?: FeatureInput[];
+    courseIds?: string[];
   };
   try {
     body = await request.json();
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest) {
   }
   const price = typeof body.price === "number" && Number.isFinite(body.price) ? Math.max(0, body.price) : 0;
   const iconKey = ICON_KEYS.includes(body.iconKey as (typeof ICON_KEYS)[number]) ? body.iconKey! : "shield";
+  const courseIds = Array.isArray(body.courseIds) ? body.courseIds.filter((c): c is string => typeof c === "string" && c.trim().length > 0) : [];
   try {
     const { id } = await createSubscriptionPlan({
       name,
@@ -70,6 +72,7 @@ export async function POST(request: NextRequest) {
       is_featured: !!body.isFeatured,
       icon_key: iconKey,
       features: parseFeatures(body.features),
+      course_ids: courseIds,
     });
     return NextResponse.json({ success: true, id });
   } catch (e) {

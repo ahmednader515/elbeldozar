@@ -11,6 +11,7 @@ import {
   hasFullCourseAccessAsStudent,
   canUserAccessQuiz,
   saveQuizEssayAnswers,
+  getMissingRequiredHomeworkForQuiz,
 } from "@/lib/db";
 
 /**
@@ -71,6 +72,12 @@ export async function GET(
       }
     }
 
+    let missingHomeworkLessons: Array<{ id: string; title: string; titleAr: string | null }> = [];
+    if (!isStaff && canAttempt) {
+      missingHomeworkLessons = await getMissingRequiredHomeworkForQuiz(session.user.id, quizId);
+      if (missingHomeworkLessons.length > 0) canAttempt = false;
+    }
+
     const rawLimit = result.quiz.timeLimitMinutes ?? result.quiz.time_limit_minutes;
     let timeLimitMinutes: number | null = null;
     if (rawLimit != null && rawLimit !== "") {
@@ -107,11 +114,19 @@ export async function GET(
       maxQuizAttempts: typeof maxAttempts === "number" ? maxAttempts : null,
       attemptsUsed,
       canAttempt,
+      missingHomeworkLessons: missingHomeworkLessons.map((l) => ({ id: l.id, title: l.title, titleAr: l.titleAr })),
     };
 
     if (!canAttempt) {
+      const isHomeworkBlock = missingHomeworkLessons.length > 0;
+      const names = missingHomeworkLessons.map((l) => l.titleAr ?? l.title).join("، ");
       return NextResponse.json(
-        { error: "تم استنفاد عدد المحاولات المسموح بها لهذا الاختبار في الكورس.", ...payload },
+        {
+          error: isHomeworkBlock
+            ? `يجب رفع واجبات الحصص التالية أولاً: ${names}`
+            : "تم استنفاد عدد المحاولات المسموح بها لهذا الاختبار في الكورس.",
+          ...payload,
+        },
         { status: 403 }
       );
     }

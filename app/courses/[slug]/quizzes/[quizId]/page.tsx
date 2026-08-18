@@ -38,8 +38,8 @@ function quizHref(course: { slug?: string | null; id: string }, quizId: string):
 }
 
 type CourseItem =
-  | { type: "lesson"; id: string; slug?: string | null }
-  | { type: "quiz"; id: string };
+  | { type: "lesson"; id: string; slug?: string | null; order: number }
+  | { type: "quiz"; id: string; order: number };
 
 export default async function QuizPage({ params }: Props) {
   const { slug: courseSegment, quizId } = await params;
@@ -88,9 +88,9 @@ export default async function QuizPage({ params }: Props) {
       ? quizzesAll.filter((q) => allowedQuizIds.includes(String(q.id)))
       : quizzesAll;
   const items: CourseItem[] = [
-    ...lessons.map((l) => ({ type: "lesson" as const, id: l.id, slug: (l as Record<string, unknown>).slug as string | null })),
-    ...quizzes.map((q) => ({ type: "quiz" as const, id: q.id })),
-  ];
+    ...lessons.map((l) => ({ type: "lesson" as const, id: l.id, slug: (l as Record<string, unknown>).slug as string | null, order: Number((l as Record<string, unknown>).order ?? 0) })),
+    ...quizzes.map((q) => ({ type: "quiz" as const, id: q.id, order: Number((q as Record<string, unknown>).order ?? 0) })),
+  ].sort((a, b) => a.order - b.order);
   const currentIndex = items.findIndex((i) => i.type === "quiz" && i.id === quizId);
   const prevItem = currentIndex > 0 ? items[currentIndex - 1] : null;
   const nextItem = currentIndex >= 0 && currentIndex < items.length - 1 ? items[currentIndex + 1] : null;

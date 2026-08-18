@@ -27,6 +27,7 @@ type PlanPatch = {
   is_featured?: boolean;
   icon_key?: string;
   features?: { text: string; included: boolean }[];
+  course_ids?: string[];
 };
 
 export async function PATCH(request: NextRequest, { params }: Params) {
@@ -46,6 +47,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     isFeatured?: boolean;
     iconKey?: string;
     features?: FeatureInput[];
+    courseIds?: string[];
   };
   try {
     body = await request.json();
@@ -71,6 +73,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     patch.icon_key = ICON_KEYS.includes(body.iconKey as (typeof ICON_KEYS)[number]) ? body.iconKey : "shield";
   }
   if (body.features !== undefined) patch.features = parseFeatures(body.features);
+  if (body.courseIds !== undefined) {
+    patch.course_ids = Array.isArray(body.courseIds)
+      ? body.courseIds.filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+      : [];
+  }
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "لا توجد حقول للتحديث" }, { status: 400 });
   }
@@ -86,6 +93,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       is_featured: patch.is_featured,
       icon_key: patch.icon_key,
       features: patch.features,
+      course_ids: patch.course_ids,
     });
   } catch (e) {
     console.error("PATCH subscription-plans/[id]", e);

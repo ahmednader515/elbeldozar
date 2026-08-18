@@ -200,6 +200,7 @@ export const enMessages: Messages = {
     trueFalse: "True/False",
     essay: "Essay",
     essayMaxScorePrefix: "Max score:",
+    homeworkRequired: "You must submit the homework for the following lessons before entering this quiz:",
     correctAnswer: "Correct answer",
     essayPlaceholder: "Write your answer here...",
     submitting: "Submitting...",
@@ -1155,6 +1156,10 @@ export const enMessages: Messages = {
       moveUp: "Move up",
       moveDown: "Move down",
       reorderFailed: "Failed to reorder",
+      labelCourses: "Courses covered by this plan",
+      coursesAllOption: "All paid courses (no restriction)",
+      coursesSpecificOption: "Specific courses",
+      noCoursesAvailable: "No published courses yet",
     },
     subscriptionStudentsClient: {
       totalRevenueLabel: "Total profit from subscriptions",

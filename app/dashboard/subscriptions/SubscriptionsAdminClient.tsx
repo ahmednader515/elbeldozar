@@ -21,7 +21,10 @@ export type AdminPlanRow = {
   iconKey: string;
   features: PlanFeatureRow[];
   sortOrder: number;
+  courseIds: string[];
 };
+
+export type AdminCourseOption = { id: string; title: string; titleAr: string | null };
 
 const ICON_OPTIONS = ["shield", "crown", "star"] as const;
 
@@ -88,12 +91,78 @@ function FeaturesEditor({
   );
 }
 
+function CoursePicker({
+  courses,
+  selectedIds,
+  onChange,
+  t,
+  Su,
+}: {
+  courses: AdminCourseOption[];
+  selectedIds: string[];
+  onChange: (next: string[]) => void;
+  t: (key: string, fallback?: string) => string;
+  Su: string;
+}) {
+  const restricted = selectedIds.length > 0;
+  return (
+    <div>
+      <span className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.labelCourses`, "Courses covered by this plan")}</span>
+      <div className="mt-2 space-y-2">
+        <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]">
+          <input
+            type="radio"
+            checked={!restricted}
+            onChange={() => onChange([])}
+            className="h-4 w-4 border-[var(--color-border)]"
+          />
+          {t(`${Su}.coursesAllOption`, "All paid courses (no restriction)")}
+        </label>
+        <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]">
+          <input
+            type="radio"
+            checked={restricted}
+            onChange={() => {
+              if (!restricted && courses.length > 0) onChange([courses[0].id]);
+            }}
+            className="h-4 w-4 border-[var(--color-border)]"
+          />
+          {t(`${Su}.coursesSpecificOption`, "Specific courses")}
+        </label>
+      </div>
+      {restricted && (
+        <div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-3">
+          {courses.length === 0 ? (
+            <p className="text-xs text-[var(--color-muted)]">{t(`${Su}.noCoursesAvailable`, "No published courses yet")}</p>
+          ) : (
+            courses.map((c) => (
+              <label key={c.id} className="flex items-center gap-2 text-sm text-[var(--color-foreground)]">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(c.id)}
+                  onChange={(e) => {
+                    onChange(e.target.checked ? [...selectedIds, c.id] : selectedIds.filter((id) => id !== c.id));
+                  }}
+                  className="h-4 w-4 rounded border-[var(--color-border)]"
+                />
+                {c.titleAr ?? c.title}
+              </label>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SubscriptionsAdminClient({
   initialEnabled,
   initialPlans,
+  courses,
 }: {
   initialEnabled: boolean;
   initialPlans: AdminPlanRow[];
+  courses: AdminCourseOption[];
 }) {
   const router = useRouter();
   const t = useT();
@@ -125,6 +194,7 @@ export function SubscriptionsAdminClient({
   const [isFeatured, setIsFeatured] = useState(false);
   const [iconKey, setIconKey] = useState<(typeof ICON_OPTIONS)[number]>("shield");
   const [features, setFeatures] = useState<PlanFeatureRow[]>([]);
+  const [courseIds, setCourseIds] = useState<string[]>([]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -141,6 +211,7 @@ export function SubscriptionsAdminClient({
   const [editIsFeatured, setEditIsFeatured] = useState(false);
   const [editIconKey, setEditIconKey] = useState<(typeof ICON_OPTIONS)[number]>("shield");
   const [editFeatures, setEditFeatures] = useState<PlanFeatureRow[]>([]);
+  const [editCourseIds, setEditCourseIds] = useState<string[]>([]);
 
   const reloadPlans = useCallback(async () => {
     const res = await fetch("/api/dashboard/subscription-plans", { credentials: "include" });
@@ -193,6 +264,7 @@ export function SubscriptionsAdminClient({
         isFeatured,
         iconKey,
         features,
+        courseIds,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -212,6 +284,7 @@ export function SubscriptionsAdminClient({
     setIsFeatured(false);
     setIconKey("shield");
     setFeatures([]);
+    setCourseIds([]);
     await reloadPlans();
     router.refresh();
   }
@@ -231,6 +304,7 @@ export function SubscriptionsAdminClient({
     setEditIsFeatured(row.isFeatured);
     setEditIconKey(ICON_OPTIONS.includes(row.iconKey as (typeof ICON_OPTIONS)[number]) ? (row.iconKey as (typeof ICON_OPTIONS)[number]) : "shield");
     setEditFeatures(row.features ?? []);
+    setEditCourseIds(row.courseIds ?? []);
     setEditOpen(true);
   }
 
@@ -266,6 +340,7 @@ export function SubscriptionsAdminClient({
         isFeatured: editIsFeatured,
         iconKey: editIconKey,
         features: editFeatures,
+        courseIds: editCourseIds,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -479,6 +554,7 @@ export function SubscriptionsAdminClient({
             </label>
           </div>
           <FeaturesEditor features={features} onChange={setFeatures} t={t} Su={Su} />
+          <CoursePicker courses={courses} selectedIds={courseIds} onChange={setCourseIds} t={t} Su={Su} />
           <div>
             <span className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.packageImageOptional`)}</span>
             {imageUrl ? (
@@ -731,6 +807,7 @@ export function SubscriptionsAdminClient({
                 </label>
               </div>
               <FeaturesEditor features={editFeatures} onChange={setEditFeatures} t={t} Su={Su} />
+              <CoursePicker courses={courses} selectedIds={editCourseIds} onChange={setEditCourseIds} t={t} Su={Su} />
               <div>
                 <span className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.packageImageOptional`)}</span>
                 {editImageUrl ? (

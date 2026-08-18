@@ -599,6 +599,10 @@ CREATE TABLE IF NOT EXISTS "SubscriptionPlan" (
   price         DECIMAL(10, 2) NOT NULL DEFAULT 0,
   is_active     BOOLEAN NOT NULL DEFAULT true,
   sort_order    INT NOT NULL DEFAULT 0,
+  badge_label   TEXT,
+  is_featured   BOOLEAN NOT NULL DEFAULT false,
+  icon_key      TEXT NOT NULL DEFAULT 'shield',
+  features      JSONB NOT NULL DEFAULT '[]',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -613,6 +617,14 @@ CREATE TABLE IF NOT EXISTS "UserPlatformSubscription" (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS "UserPlatformSubscription_user_expires_idx" ON "UserPlatformSubscription"(user_id, expires_at);
+
+-- الكورسات التي تغطيها كل باقة — بلا صفوف لباقة = تغطي كل الكورسات المدفوعة المنشورة
+CREATE TABLE IF NOT EXISTS "SubscriptionPlanCourse" (
+  plan_id   TEXT NOT NULL REFERENCES "SubscriptionPlan"(id) ON DELETE CASCADE,
+  course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+  PRIMARY KEY (plan_id, course_id)
+);
+CREATE INDEX IF NOT EXISTS "SubscriptionPlanCourse_course_idx" ON "SubscriptionPlanCourse"(course_id);
 
 -- ============================================================
 -- 20) تقييمات الدروس (add-lesson-ratings)

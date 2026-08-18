@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { getSubscriptionsFeatureEnabled, listSubscriptionPlansAll } from "@/lib/db";
+import { getSubscriptionsFeatureEnabled, listSubscriptionPlansAll, getCoursesPublished } from "@/lib/db";
 import { SubscriptionsAdminClient, type AdminPlanRow } from "./SubscriptionsAdminClient";
 
 export default async function SubscriptionsDashboardPage() {
@@ -27,10 +27,23 @@ export default async function SubscriptionsDashboardPage() {
       iconKey: r.iconKey,
       features: r.features,
       sortOrder: r.sortOrder,
+      courseIds: r.courseIds,
     }));
   } catch {
     plans = [];
   }
 
-  return <SubscriptionsAdminClient initialEnabled={enabled} initialPlans={plans} />;
+  let courses: { id: string; title: string; titleAr: string | null }[] = [];
+  try {
+    const rows = await getCoursesPublished(false);
+    courses = rows.map((c) => ({
+      id: c.id,
+      title: c.title,
+      titleAr: (c as { titleAr?: string | null }).titleAr ?? null,
+    }));
+  } catch {
+    courses = [];
+  }
+
+  return <SubscriptionsAdminClient initialEnabled={enabled} initialPlans={plans} courses={courses} />;
 }

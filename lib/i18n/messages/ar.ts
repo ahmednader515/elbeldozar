@@ -200,6 +200,7 @@ export const arMessages: Messages = {
     trueFalse: "صح وخطأ",
     essay: "مقالي",
     essayMaxScorePrefix: "الدرجة القصوى:",
+    homeworkRequired: "يجب رفع واجبات الحصص التالية أولاً قبل دخول هذا الاختبار:",
     correctAnswer: "إجابة صحيحة",
     essayPlaceholder: "اكتب إجابتك هنا...",
     submitting: "جاري التسجيل...",
@@ -1153,6 +1154,10 @@ export const arMessages: Messages = {
       moveUp: "تحريك لأعلى",
       moveDown: "تحريك لأسفل",
       reorderFailed: "فشل تغيير الترتيب",
+      labelCourses: "الكورسات التي تغطيها هذه الباقة",
+      coursesAllOption: "كل الكورسات المدفوعة (بدون تحديد)",
+      coursesSpecificOption: "كورسات محددة",
+      noCoursesAvailable: "لا توجد كورسات منشورة بعد",
     },
     subscriptionStudentsClient: {
       totalRevenueLabel: "إجمالي الأرباح من الاشتراكات",
