@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
     categoryName?: string;
     categoryNameAr?: string;
     categoryNameEn?: string;
+    stageId?: string | null;
     acceptsHomework?: boolean;
     lessons?: LessonInput[];
     quizzes?: QuizInput[];
@@ -126,6 +127,7 @@ export async function POST(request: NextRequest) {
       created_by_id: session.user.id,
       max_quiz_attempts: body.maxQuizAttempts ?? null,
       category_id: categoryId,
+      stage_id: body.stageId?.trim() || null,
       accepts_homework: !!body.acceptsHomework,
     });
   } catch (err) {

@@ -53,6 +53,7 @@ export async function PUT(
     categoryName?: string;
     categoryNameAr?: string;
     categoryNameEn?: string;
+    stageId?: string | null;
     acceptsHomework?: boolean;
     lessons?: LessonInput[];
     quizzes?: QuizInput[];
@@ -134,6 +135,7 @@ export async function PUT(
     is_published: body.isPublished ?? true,
     max_quiz_attempts: body.maxQuizAttempts ?? null,
     ...(categoryId !== undefined && { category_id: categoryId }),
+    ...(body.stageId !== undefined && { stage_id: body.stageId?.trim() || null }),
     ...(body.acceptsHomework !== undefined && { accepts_homework: body.acceptsHomework }),
   });
 
@@ -244,6 +246,7 @@ export async function GET(
     isPublished: c.isPublished ?? c.is_published ?? true,
     maxQuizAttempts: c.maxQuizAttempts ?? c.max_quiz_attempts ?? null,
     categoryId: (c as { categoryId?: string | null }).categoryId ?? null,
+    stageId: (c as { stageId?: string | null; stage_id?: string | null }).stageId ?? (c as { stage_id?: string | null }).stage_id ?? null,
     lessons: data.lessons.map((l) => ({
       title: l.title,
       titleAr: l.titleAr ?? l.title_ar,

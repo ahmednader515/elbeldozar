@@ -13,6 +13,8 @@ export interface User {
   balance: string;
   student_number?: string | null;
   guardian_number?: string | null;
+  /** المرحلة الدراسية — مرجع لجدول Stage */
+  stage_id?: string | null;
   /** عنوان المادة / التخصص — يظهر في «اختر المدرسين» */
   teacher_subject?: string | null;
   teacher_avatar_url?: string | null;
@@ -297,6 +299,8 @@ export interface Course {
   is_published: boolean;
   order: number;
   category_id: string | null;
+  /** المرحلة الدراسية — فارغ يعني الكورس يظهر لكل المراحل */
+  stage_id?: string | null;
   created_by_id: string | null;
   accepts_homework?: boolean;
   /** متوسط تقييم الكورس المحسوب من كل تقييمات دروسه */

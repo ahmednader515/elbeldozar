@@ -69,6 +69,7 @@ export default async function EditCoursePage({ params }: Props) {
     isPublished: Boolean(c.isPublished ?? c.is_published ?? true),
     maxQuizAttempts: typeof c.maxQuizAttempts === "number" ? c.maxQuizAttempts : typeof c.max_quiz_attempts === "number" ? c.max_quiz_attempts : null,
     categoryId: (c.categoryId ?? c.category_id ?? "") as string,
+    stageId: (c.stageId ?? c.stage_id ?? null) as string | null,
     lessons: data.lessons.map((l) => {
       const row = l as Record<string, unknown>;
       return {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
-import { getUserByEmail, createUser } from "@/lib/db";
+import { getUserByEmail, createUser, getStageById } from "@/lib/db";
 import { z } from "zod";
 
 function digitsOnly(s: string): string {
@@ -14,6 +14,7 @@ const signupSchema = z
     name: z.string().min(2, "الاسم حرفين على الأقل"),
     student_number: z.string().min(1, "رقم الهاتف مطلوب"),
     guardian_number: z.string().optional(),
+    stage_id: z.string().min(1, "المرحلة الدراسية مطلوبة"),
   })
   .refine(
     (data) => digitsOnly(data.student_number).length === 11,
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const { email, password, name, student_number, guardian_number } = parsed.data;
+    const { email, password, name, student_number, guardian_number, stage_id } = parsed.data;
 
     const existing = await getUserByEmail(email);
     if (existing) {
@@ -38,6 +39,11 @@ export async function POST(request: NextRequest) {
         { error: "البريد الإلكتروني مستخدم مسبقاً" },
         { status: 400 }
       );
+    }
+
+    const stage = await getStageById(stage_id);
+    if (!stage) {
+      return NextResponse.json({ error: "المرحلة الدراسية غير صالحة" }, { status: 400 });
     }
 
     const passwordHash = await hash(password, 12);
@@ -48,6 +54,7 @@ export async function POST(request: NextRequest) {
       role: "STUDENT",
       student_number: student_number.trim(),
       guardian_number: guardian_number?.trim() || null,
+      stage_id,
     });
 
     return NextResponse.json({ success: true });

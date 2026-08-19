@@ -117,6 +117,9 @@ export function DashboardNav({
           <NavLink href="/dashboard/courses/new" exact>
             {t("dashboardNav.createCourse", "Create course")}
           </NavLink>
+          <NavLink href="/dashboard/stages">
+            {t("dashboardNav.stages", "Educational stages")}
+          </NavLink>
           <NavLink href="/dashboard/reviews">
             {t("dashboardNav.studentReviews", "Student reviews")}
           </NavLink>

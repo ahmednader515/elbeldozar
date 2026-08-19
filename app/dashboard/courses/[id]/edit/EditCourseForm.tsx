@@ -6,6 +6,7 @@ import { useT } from "@/components/LocaleProvider";
 import { CourseFormSaveOverlay } from "../../CourseFormSaveOverlay";
 
 type CategoryOption = { id: string; name: string; nameAr?: string | null };
+type StageOption = { id: string; nameAr: string; nameEn: string | null };
 type LessonRow = { title: string; videoUrl: string; content: string; pdfUrl: string; acceptsHomework: boolean };
 type QuestionOptionRow = { text: string; isCorrect: boolean };
 type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE" | "ESSAY"; questionText: string; options: QuestionOptionRow[]; maxScore: string };
@@ -29,6 +30,7 @@ type InitialData = {
   isPublished: boolean;
   maxQuizAttempts: number | null;
   categoryId: string;
+  stageId?: string | null;
   lessons: LessonRow[];
   quizzes: InitialQuizRow[];
   contentOrder: ContentOrderEntry[];
@@ -48,6 +50,7 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [stages, setStages] = useState<StageOption[]>([]);
   const [form, setForm] = useState({
     titleAr: initialData.titleAr,
     titleEn: initialData.titleEn,
@@ -62,6 +65,7 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
     categoryId: initialData.categoryId ?? "",
     categoryNameAr: "",
     categoryNameEn: "",
+    stageId: initialData.stageId ?? "",
   });
   const [lessons, setLessons] = useState<LessonRow[]>(
     initialData.lessons.length > 0
@@ -84,6 +88,10 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
 
   useEffect(() => {
     loadCategories();
+    fetch("/api/public/stages")
+      .then((r) => r.json())
+      .then((data) => Array.isArray(data.stages) && setStages(data.stages))
+      .catch(() => {});
   }, []);
 
   const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
@@ -328,6 +336,7 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
       price: form.price ? parseFloat(form.price) : 0,
       isPublished: form.isPublished,
       maxQuizAttempts: form.maxQuizAttempts.trim() ? parseInt(form.maxQuizAttempts, 10) : null,
+      stageId: form.stageId || null,
       ...(form.categoryNameAr.trim() || form.categoryNameEn.trim()
         ? { categoryNameAr: form.categoryNameAr.trim(), categoryNameEn: form.categoryNameEn.trim() }
         : form.categoryId ? { categoryId: form.categoryId } : { categoryId: null }),
@@ -473,6 +482,22 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
                 </ul>
               </div>
             )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.stageOptional`, "Educational stage (optional)")}</label>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.stageHelp`, "Leave empty for the course to be visible to all stages. Only affects access granted through platform subscriptions.")}</p>
+            <select
+              value={form.stageId}
+              onChange={(e) => setForm((f) => ({ ...f, stageId: e.target.value }))}
+              className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            >
+              <option value="">{t(`${Cf}.stageAllOption`, "All stages")}</option>
+              {stages.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.nameAr}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.priceEgpLabel`)}</label>

@@ -341,6 +341,19 @@ export async function backfillMissingStudentCopyrightCodes(): Promise<void> {
   }
 }
 
+let userStageIdColumnEnsured = false;
+/** عمود المرحلة الدراسية للمستخدم — ON DELETE SET NULL: حذف المرحلة من الأدمن لا يعطّل الحساب */
+async function ensureUserStageIdColumn(): Promise<void> {
+  if (userStageIdColumnEnsured) return;
+  try {
+    await ensureStageSchema();
+    await sql`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS stage_id TEXT REFERENCES "Stage"(id) ON DELETE SET NULL`;
+    userStageIdColumnEnsured = true;
+  } catch {
+    /* DDL غير متاح */
+  }
+}
+
 export async function createUser(data: {
   email: string;
   password_hash: string;
@@ -350,6 +363,7 @@ export async function createUser(data: {
   guardian_number?: string | null;
   teacher_subject?: string | null;
   teacher_avatar_url?: string | null;
+  stage_id?: string | null;
 }): Promise<User> {
   const id = generateId();
   let usedFallbackInsertWithoutTeacherCols = false;
@@ -388,6 +402,11 @@ export async function createUser(data: {
       /* أعمدة المدرس غير متوفرة بعد */
     });
   }
+  if (data.stage_id !== undefined) {
+    await updateUser(id, { stage_id: data.stage_id }).catch(() => {
+      /* عمود المرحلة غير متوفر بعد */
+    });
+  }
   const u = await getUserById(id);
   if (!u) throw new Error("فشل إنشاء المستخدم");
   return u;
@@ -405,6 +424,7 @@ export async function updateUser(
     guardian_number?: string | null;
     teacher_subject?: string | null;
     teacher_avatar_url?: string | null;
+    stage_id?: string | null;
   }
 ): Promise<void> {
   if (data.name !== undefined) await sql`UPDATE "User" SET name = ${data.name}, updated_at = NOW() WHERE id = ${id}`;
@@ -426,6 +446,14 @@ export async function updateUser(
       await sql`UPDATE "User" SET teacher_avatar_url = ${data.teacher_avatar_url}, updated_at = NOW() WHERE id = ${id}`;
     } catch {
       /* عمود غير موجود */
+    }
+  }
+  if (data.stage_id !== undefined) {
+    try {
+      await ensureUserStageIdColumn();
+      await sql`UPDATE "User" SET stage_id = ${data.stage_id}, updated_at = NOW() WHERE id = ${id}`;
+    } catch {
+      /* عمود المرحلة غير موجود بعد */
     }
   }
 }
@@ -518,6 +546,78 @@ export async function deletePasswordChangeRequest(requestId: string): Promise<bo
   if (!requestId?.trim()) return false;
   await sql`DELETE FROM "PasswordChangeRequest" WHERE id = ${requestId.trim()}`;
   return true;
+}
+
+// ----- Stage (المرحلة الدراسية) -----
+export type Stage = { id: string; nameAr: string; nameEn: string | null; order: number };
+
+let stageSchemaEnsured = false;
+async function ensureStageSchema(): Promise<void> {
+  if (stageSchemaEnsured) return;
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS "Stage" (
+        id TEXT PRIMARY KEY,
+        name_ar TEXT NOT NULL,
+        name_en TEXT,
+        "order" INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    stageSchemaEnsured = true;
+  } catch {
+    /* إنشاء الجدول قد يفشل بدون صلاحية CREATE */
+  }
+}
+
+export async function listStages(): Promise<Stage[]> {
+  try {
+    await ensureStageSchema();
+    const rows = await sql`SELECT id, name_ar, name_en, "order" FROM "Stage" ORDER BY "order" ASC, created_at ASC`;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id),
+      nameAr: String(r.name_ar ?? ""),
+      nameEn: r.name_en ? String(r.name_en) : null,
+      order: Number(r.order ?? 0),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getStageById(id: string): Promise<Stage | null> {
+  try {
+    await ensureStageSchema();
+    const rows = await sql`SELECT id, name_ar, name_en, "order" FROM "Stage" WHERE id = ${id} LIMIT 1`;
+    const r = rows[0] as Record<string, unknown> | undefined;
+    if (!r) return null;
+    return { id: String(r.id), nameAr: String(r.name_ar ?? ""), nameEn: r.name_en ? String(r.name_en) : null, order: Number(r.order ?? 0) };
+  } catch {
+    return null;
+  }
+}
+
+export async function createStage(data: { nameAr: string; nameEn?: string | null; order?: number }): Promise<{ id: string }> {
+  await ensureStageSchema();
+  const id = generateId();
+  await sql`
+    INSERT INTO "Stage" (id, name_ar, name_en, "order")
+    VALUES (${id}, ${data.nameAr.trim()}, ${data.nameEn?.trim() || null}, ${data.order ?? 0})
+  `;
+  return { id };
+}
+
+export async function updateStage(id: string, data: { nameAr?: string; nameEn?: string | null; order?: number }): Promise<void> {
+  await ensureStageSchema();
+  if (data.nameAr !== undefined) await sql`UPDATE "Stage" SET name_ar = ${data.nameAr.trim()}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.nameEn !== undefined) await sql`UPDATE "Stage" SET name_en = ${data.nameEn?.trim() || null}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.order !== undefined) await sql`UPDATE "Stage" SET "order" = ${data.order}, updated_at = NOW() WHERE id = ${id}`;
+}
+
+export async function deleteStage(id: string): Promise<void> {
+  await ensureStageSchema();
+  await sql`DELETE FROM "Stage" WHERE id = ${id}`;
 }
 
 // ----- Category -----
@@ -3190,6 +3290,15 @@ export async function userHasActivePlatformSubscriptionForPaidCourse(userId: str
   if (!pub) return false;
   const price = Number((course as { price?: unknown }).price) || 0;
   if (!(price > 0)) return false;
+  // مطابقة المرحلة الدراسية للوصول عبر الاشتراك فقط — طرف بلا مرحلة (طالب أو كورس) يُعامَل كمفتوح
+  const courseStageId = (course as { stageId?: string | null; stage_id?: string | null }).stageId
+    ?? (course as { stage_id?: string | null }).stage_id
+    ?? null;
+  if (courseStageId) {
+    const student = await getUserById(userId);
+    const studentStageId = (student as { stage_id?: string | null } | null)?.stage_id ?? null;
+    if (studentStageId && studentStageId !== courseStageId) return false;
+  }
   return doesPlanCoverCourse(planId, courseId);
 }
 
@@ -3599,6 +3708,7 @@ export async function createCourse(data: {
   max_quiz_attempts?: number | null;
   category_id?: string | null;
   accepts_homework?: boolean;
+  stage_id?: string | null;
 }): Promise<Course> {
   await ensureCourseBilingualColumns();
   const id = generateId();
@@ -3638,7 +3748,25 @@ export async function createCourse(data: {
   const row = rows?.[0] as Record<string, unknown> | undefined;
   const c = row ? rowToCamel(row) as Course : null;
   if (!c) throw new Error("فشل إنشاء الدورة");
+  if (data.stage_id !== undefined) {
+    await updateCourse(id, { stage_id: data.stage_id }).catch(() => {
+      /* عمود المرحلة غير متوفر بعد */
+    });
+  }
   return c;
+}
+
+let courseStageIdColumnEnsured = false;
+/** عمود المرحلة الدراسية للكورس — فارغ يعني الكورس يظهر لكل المراحل */
+async function ensureCourseStageIdColumn(): Promise<void> {
+  if (courseStageIdColumnEnsured) return;
+  try {
+    await ensureStageSchema();
+    await sql`ALTER TABLE "Course" ADD COLUMN IF NOT EXISTS stage_id TEXT REFERENCES "Stage"(id) ON DELETE SET NULL`;
+    courseStageIdColumnEnsured = true;
+  } catch {
+    /* DDL غير متاح */
+  }
 }
 
 export async function updateCourse(
@@ -3656,6 +3784,7 @@ export async function updateCourse(
     max_quiz_attempts?: number | null;
     category_id?: string | null;
     accepts_homework?: boolean;
+    stage_id?: string | null;
   }
 ): Promise<void> {
   await ensureCourseBilingualColumns();
@@ -3675,6 +3804,14 @@ export async function updateCourse(
       await sql`UPDATE "Course" SET accepts_homework = ${data.accepts_homework}, updated_at = NOW() WHERE id = ${id}`;
     } catch {
       /* العمود قد يكون غير موجود قبل تشغيل scripts/add-homework.sql */
+    }
+  }
+  if (data.stage_id !== undefined) {
+    try {
+      await ensureCourseStageIdColumn();
+      await sql`UPDATE "Course" SET stage_id = ${data.stage_id}, updated_at = NOW() WHERE id = ${id}`;
+    } catch {
+      /* عمود المرحلة غير موجود بعد */
     }
   }
 }
@@ -4341,6 +4478,8 @@ export async function getAccessibleCoursesForUser(userId: string): Promise<(Cour
   await ensurePlatformSubscriptionSchema();
   await ensureLessonRatingsSchema();
   await ensureUserAccessGrantsSchema();
+  await ensureUserStageIdColumn();
+  await ensureCourseStageIdColumn();
   const rows = await sql`
     SELECT c.*, ${courseRatingSelectSql()}, cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug
     FROM "Course" c
@@ -4365,6 +4504,11 @@ export async function getAccessibleCoursesForUser(userId: string): Promise<(Cour
     OR (
       c.is_published = true
       AND COALESCE(c.price, 0) > 0
+      AND (
+        c.stage_id IS NULL
+        OR (SELECT u.stage_id FROM "User" u WHERE u.id = ${userId}) IS NULL
+        OR c.stage_id = (SELECT u.stage_id FROM "User" u WHERE u.id = ${userId})
+      )
       AND EXISTS (
         SELECT 1 FROM "UserPlatformSubscription" ups
         JOIN "SubscriptionPlan" sp ON sp.id = ups.plan_id

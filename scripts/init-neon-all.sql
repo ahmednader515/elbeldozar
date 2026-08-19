@@ -8,6 +8,16 @@
 -- الاشتراكات، تقييمات الدروس، وطلبات تغيير كلمة المرور.
 -- ============================================================
 
+-- 0) المراحل الدراسية (يديرها الأدمن — يختارها الطالب عند التسجيل، وتُربط بالكورسات)
+CREATE TABLE IF NOT EXISTS "Stage" (
+  id         TEXT PRIMARY KEY,
+  name_ar    TEXT NOT NULL,
+  name_en    TEXT,
+  "order"    INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- 1) المستخدمون
 CREATE TABLE IF NOT EXISTS "User" (
   id             TEXT PRIMARY KEY,
@@ -16,6 +26,7 @@ CREATE TABLE IF NOT EXISTS "User" (
   name           TEXT NOT NULL,
   role           TEXT NOT NULL DEFAULT 'STUDENT' CHECK (role IN ('ADMIN', 'ASSISTANT_ADMIN', 'STUDENT', 'TEACHER')),
   balance        DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  stage_id       TEXT REFERENCES "Stage"(id) ON DELETE SET NULL,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -52,6 +63,7 @@ CREATE TABLE IF NOT EXISTS "Course" (
   "order"             INT NOT NULL DEFAULT 0,
   max_quiz_attempts   INT,
   category_id         TEXT REFERENCES "Category"(id) ON DELETE SET NULL,
+  stage_id            TEXT REFERENCES "Stage"(id) ON DELETE SET NULL,
   created_by_id       TEXT REFERENCES "User"(id) ON DELETE SET NULL,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()

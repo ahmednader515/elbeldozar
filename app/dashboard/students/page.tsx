@@ -7,6 +7,7 @@ import {
   getAccessibleCoursesForUser,
   getCoursesPublished,
   backfillMissingStudentCopyrightCodes,
+  listStages,
 } from "@/lib/db";
 import { getServerTranslator } from "@/lib/i18n/server";
 import { StudentsList } from "./StudentsList";
@@ -25,9 +26,10 @@ export default async function StudentsPage() {
 
   await backfillMissingStudentCopyrightCodes().catch(() => {});
 
-  const [rows, coursesList] = await Promise.all([
+  const [rows, coursesList, stages] = await Promise.all([
     getUsersByRole("STUDENT"),
     getCoursesPublished(true),
+    listStages().catch(() => []),
   ]);
 
   let admins: Awaited<ReturnType<typeof getUsersByRole>> = [];
@@ -55,6 +57,7 @@ export default async function StudentsPage() {
     balance: Number(s.balance),
     student_number: s.student_number ?? null,
     guardian_number: s.guardian_number ?? null,
+    stage_id: (row.stageId as string | null | undefined) ?? (s as { stage_id?: string | null }).stage_id ?? null,
     copyright_code: (row.copyright_code as string | null | undefined) ?? (s as { copyright_code?: string | null }).copyright_code ?? null,
     _count: { enrollments: enrollmentsByUser[i].length },
     enrollments: enrollmentsByUser[i].map((e) => ({
@@ -98,6 +101,7 @@ export default async function StudentsPage() {
         <StudentsList
           students={students}
           courses={coursesPlain}
+          stages={stages}
           isAdmin={isAdmin}
           canAddBalance={isAdmin || isAssistant}
           canManageEnrollments={isAdmin}

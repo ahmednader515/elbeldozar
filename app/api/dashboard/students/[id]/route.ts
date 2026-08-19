@@ -26,14 +26,14 @@ export async function PATCH(
     return NextResponse.json({ error: "يمكنك تعديل حسابات الطلاب فقط" }, { status: 403 });
   }
 
-  let body: { name?: string; email?: string; role?: string; password?: string; student_number?: string | null; guardian_number?: string | null };
+  let body: { name?: string; email?: string; role?: string; password?: string; student_number?: string | null; guardian_number?: string | null; stage_id?: string | null };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "طلب غير صالح" }, { status: 400 });
   }
 
-  const data: { name?: string; email?: string; role?: "ADMIN" | "ASSISTANT_ADMIN" | "STUDENT"; password_hash?: string; student_number?: string | null; guardian_number?: string | null } = {};
+  const data: { name?: string; email?: string; role?: "ADMIN" | "ASSISTANT_ADMIN" | "STUDENT"; password_hash?: string; student_number?: string | null; guardian_number?: string | null; stage_id?: string | null } = {};
 
   if (body.name !== undefined && body.name.trim()) data.name = body.name.trim();
 
@@ -56,6 +56,7 @@ export async function PATCH(
 
   if (body.student_number !== undefined) data.student_number = body.student_number?.trim() || null;
   if (body.guardian_number !== undefined) data.guardian_number = body.guardian_number?.trim() || null;
+  if (body.stage_id !== undefined) data.stage_id = body.stage_id?.trim() || null;
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "لا يوجد شيء للتحديث" }, { status: 400 });

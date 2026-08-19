@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import LoginBackground from "@/app/login/LoginBackground";
 import { useT } from "@/components/LocaleProvider";
+
+type StageOption = { id: string; nameAr: string; nameEn: string | null };
 
 export default function RegisterPage() {
   const t = useT();
@@ -13,9 +15,18 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [studentNumber, setStudentNumber] = useState("");
   const [guardianNumber, setGuardianNumber] = useState("");
+  const [stageId, setStageId] = useState("");
+  const [stages, setStages] = useState<StageOption[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    fetch("/api/public/stages")
+      .then((r) => r.json())
+      .then((data) => Array.isArray(data.stages) && setStages(data.stages))
+      .catch(() => {});
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,6 +34,10 @@ export default function RegisterPage() {
     const digits = studentNumber.replace(/\D/g, "");
     if (digits.length !== 11) {
       setError(t("auth.register.phoneMustBe11", "Phone number must be 11 digits"));
+      return;
+    }
+    if (!stageId) {
+      setError(t("auth.register.stageRequired", "Please select your educational stage"));
       return;
     }
     setLoading(true);
@@ -35,6 +50,7 @@ export default function RegisterPage() {
         name,
         student_number: studentNumber.trim() || undefined,
         guardian_number: guardianNumber.trim() || undefined,
+        stage_id: stageId,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -133,6 +149,28 @@ export default function RegisterPage() {
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
               placeholder={t("auth.register.parentPhonePlaceholder", "Guardian phone number")}
             />
+          </div>
+          <div>
+            <label
+              htmlFor="stage_id"
+              className="block text-sm font-medium text-[var(--color-foreground)]"
+            >
+              {t("auth.register.stageLabel", "Educational stage")}
+            </label>
+            <select
+              id="stage_id"
+              value={stageId}
+              onChange={(e) => setStageId(e.target.value)}
+              required
+              className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+            >
+              <option value="">{t("auth.register.stagePlaceholder", "Select your stage...")}</option>
+              {stages.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.nameAr}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label

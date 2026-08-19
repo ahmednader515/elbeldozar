@@ -17,6 +17,8 @@ type Enrollment = {
 
 type PartialAccessCourse = { id: string; title: string; titleAr: string | null };
 
+type Stage = { id: string; nameAr: string; nameEn: string | null };
+
 type Student = {
   id: string;
   name: string;
@@ -26,6 +28,7 @@ type Student = {
   student_number?: string | null;
   guardian_number?: string | null;
   copyright_code?: string | null;
+  stage_id?: string | null;
   _count: { enrollments: number };
   enrollments: Enrollment[];
   partialAccessCourses?: PartialAccessCourse[];
@@ -47,6 +50,7 @@ function translateRole(role: string, t: (key: string, fallback?: string) => stri
 export function StudentsList({
   students: initialStudents,
   courses,
+  stages = [],
   isAdmin,
   canAddBalance = false,
   canManageEnrollments = true,
@@ -54,6 +58,7 @@ export function StudentsList({
 }: {
   students: Student[];
   courses: Course[];
+  stages?: Stage[];
   isAdmin: boolean;
   canAddBalance?: boolean;
   canManageEnrollments?: boolean;
@@ -71,6 +76,8 @@ export function StudentsList({
   const [editPassword, setEditPassword] = useState("");
   const [editStudentNumber, setEditStudentNumber] = useState("");
   const [editGuardianNumber, setEditGuardianNumber] = useState("");
+  const [editStageId, setEditStageId] = useState("");
+  const stageNameById = useMemo(() => new Map(stages.map((s) => [s.id, s.nameAr])), [stages]);
   const [coursesStudent, setCoursesStudent] = useState<Student | null>(null);
   const [addCourseId, setAddCourseId] = useState("");
   const [loading, setLoading] = useState(false);
@@ -115,6 +122,7 @@ export function StudentsList({
     setEditPassword("");
     setEditStudentNumber(s.student_number ?? "");
     setEditGuardianNumber(s.guardian_number ?? "");
+    setEditStageId(s.stage_id ?? "");
     setError("");
   }
 
@@ -130,10 +138,12 @@ export function StudentsList({
       password?: string;
       student_number?: string | null;
       guardian_number?: string | null;
+      stage_id?: string | null;
     } = {
       name: editName.trim(),
       student_number: editStudentNumber.trim() || null,
       guardian_number: editGuardianNumber.trim() || null,
+      stage_id: editStageId || null,
     };
     if (canEditFullProfile) {
       payload.email = editEmail.trim();
@@ -313,6 +323,7 @@ export function StudentsList({
               <th className={thClass}>{t("dashboard.studentsPage.colEmail", "Email")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colStudentNumber", "Student number")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colGuardianNumber", "Guardian number")}</th>
+              <th className={thClass}>{t("dashboard.studentsPage.colStage", "Stage")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colCopyright", "Copyright code")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colBalance", "Balance")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colCourses", "Courses")}</th>
@@ -332,6 +343,7 @@ export function StudentsList({
                 <td className="p-3 text-[var(--color-muted)]">{s.email}</td>
                 <td className="p-3 text-[var(--color-foreground)]">{s.student_number ?? dash}</td>
                 <td className="p-3 text-[var(--color-foreground)]">{s.guardian_number ?? dash}</td>
+                <td className="p-3 text-[var(--color-foreground)]">{(s.stage_id && stageNameById.get(s.stage_id)) ?? dash}</td>
                 <td className="p-3 font-mono text-sm text-[var(--color-foreground)]">
                   {s.copyright_code ?? dash}
                 </td>
@@ -665,6 +677,23 @@ export function StudentsList({
                     "Guardian number",
                   )}
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">
+                  {t("dashboard.studentsPage.labelStage", "Educational stage")}
+                </label>
+                <select
+                  value={editStageId}
+                  onChange={(e) => setEditStageId(e.target.value)}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                >
+                  <option value="">{t("dashboard.studentsPage.stageNoneOption", "No stage")}</option>
+                  {stages.map((st) => (
+                    <option key={st.id} value={st.id}>
+                      {st.nameAr}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-[var(--color-foreground)]">
